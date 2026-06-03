@@ -1,0 +1,43 @@
+/**
+ * Firestore document shapes and field constraints.
+ * Portable schema documentation for desktop + future React Native.
+ */
+import type {
+  AppUser,
+  Ingredient,
+  InventoryTransaction,
+  MenuCategory,
+  MenuItem,
+  Order,
+  OrderItem,
+  Payment,
+  Recipe,
+  AppSettings
+} from '../types'
+
+export type FirestoreDoc<T> = T
+
+export interface FirestoreSchema {
+  users: FirestoreDoc<AppUser>
+  menu_categories: FirestoreDoc<MenuCategory>
+  menu_items: FirestoreDoc<MenuItem>
+  recipes: FirestoreDoc<Recipe>
+  ingredients: FirestoreDoc<Ingredient>
+  inventory_transactions: FirestoreDoc<InventoryTransaction>
+  orders: FirestoreDoc<Order>
+  order_items: FirestoreDoc<OrderItem>
+  payments: FirestoreDoc<Payment>
+  settings: FirestoreDoc<AppSettings>
+}
+
+/** Default settings document id */
+export const SETTINGS_DOC_ID = 'app'
+
+/** Indexes recommended in Firebase console */
+export const FIRESTORE_INDEX_HINTS = [
+  'inventory_transactions: ingredientId ASC, createdAt DESC',
+  'orders: status ASC, createdAt DESC',
+  'order_items: orderId ASC',
+  'menu_items: categoryId ASC, sortOrder ASC',
+  'recipes: menuItemId ASC'
+] as const

@@ -1,0 +1,95 @@
+{
+  "name": "abdokofta-pos",
+  "version": "1.0.1",
+  "description": "Restaurant Management and POS - Arabic RTL",
+  "main": "./out/main/index.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:win:publish": "npm run build && electron-builder --win --x64 --publish always",
+    "preview:prod": "npm run build && electron .",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "seed": "tsx scripts/seed.ts",
+    "deploy:rules": "tsx scripts/deploy-rules.ts",
+    "verify:login": "tsx scripts/verify-login.ts",
+    "setup:firebase": "tsx scripts/setup-firebase.ts"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.3",
+    "firebase": "^11.6.0",
+    "firebase-admin": "^13.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-icons": "5.6.0",
+    "react-router-dom": "^7.6.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "dotenv": "^16.5.0",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.abdokofta.pos",
+    "productName": "Abdo Kofta POS",
+    "copyright": "Abdo Kofta",
+    "publish": {
+      "provider": "github",
+      "owner": "xlargetomato",
+      "repo": "AbdoKoftaDesktop",
+      "releaseType": "release"
+    },
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "!scripts/**",
+      "!**/*.md",
+      "!**/.env*",
+      "!service-account.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Abdo Kofta POS",
+      "installerLanguages": [
+        "en-US",
+        "ar"
+      ]
+    }
+  }
+}
