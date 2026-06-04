@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { HashRouter, Navigate, Route, Routes, Outlet } from 'react-router-dom'
 import { useAuthBootstrap } from '@renderer/features/auth/use-auth-bootstrap'
 import { useSyncListener } from '@renderer/features/sync/use-sync-listener'
@@ -6,7 +6,9 @@ import { useAuthStore } from '@renderer/features/auth/auth-store'
 import { ProtectedRoute } from '@renderer/features/auth/ProtectedRoute'
 import { AppShell } from '@renderer/components/layout/AppShell'
 import { PageLoader } from '@renderer/components/PageLoader'
-import { UpdateNotification } from '@renderer/components/UpdateNotification'
+import { UpdateNotification, useUpdaterBootstrap } from '@renderer/components/UpdateNotification'
+import { applyThemeColor } from '@renderer/features/theme/theme-store'
+import { getSettings } from '@renderer/features/orders/order-service'
 import { CASHIER_NAV, MANAGER_NAV } from '@renderer/config/navigation'
 
 const LoginPage = lazy(() =>
@@ -50,6 +52,16 @@ const ReportsPage = lazy(() =>
     default: m.ReportsPage
   }))
 )
+const SettingsPage = lazy(() =>
+  import('@renderer/features/manager/SettingsPage').then((m) => ({
+    default: m.SettingsPage
+  }))
+)
+const CashierHistoryPage = lazy(() =>
+  import('@renderer/features/manager/CashierHistoryPage').then((m) => ({
+    default: m.CashierHistoryPage
+  }))
+)
 
 function CashierLayout(): React.ReactElement {
   return (
@@ -84,6 +96,14 @@ function LazyPage({ children }: { children: React.ReactNode }): React.ReactEleme
 export default function App(): React.ReactElement {
   useAuthBootstrap()
   useSyncListener()
+  useUpdaterBootstrap()
+
+  // Apply saved theme color on startup
+  useEffect(() => {
+    void getSettings().then((s) => {
+      if (s.primaryColor) applyThemeColor(s.primaryColor)
+    })
+  }, [])
 
   return (
     <HashRouter>
@@ -167,6 +187,22 @@ export default function App(): React.ReactElement {
               element={
                 <LazyPage>
                   <ReportsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/settings"
+              element={
+                <LazyPage>
+                  <SettingsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/cashier-history"
+              element={
+                <LazyPage>
+                  <CashierHistoryPage />
                 </LazyPage>
               }
             />

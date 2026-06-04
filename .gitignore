@@ -30,6 +30,12 @@ Thumbs.db
 *.suo
 *.user
 
+# Kiro AI
+.kiro
+
+# TypeScript build cache
+*.tsbuildinfo
+
 # Temp
 *.tmp
 *.temp

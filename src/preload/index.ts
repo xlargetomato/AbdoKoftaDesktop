@@ -6,7 +6,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAuthUser: (uid: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('auth:delete-user', uid),
 
+  // App version & control
+  getAppVersion: (): Promise<string> =>
+    ipcRenderer.invoke('app:get-version'),
+  restartApp: (): Promise<void> =>
+    ipcRenderer.invoke('app:restart'),
+
   // Auto-updater
+  updaterCheckNow: (): Promise<void> =>
+    ipcRenderer.invoke('updater:check-now'),
   updaterStartDownload: (): Promise<void> =>
     ipcRenderer.invoke('updater:start-download'),
   updaterQuitAndInstall: (): Promise<void> =>
@@ -34,5 +42,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: Electron.IpcRendererEvent, err: { message: string }): void => cb(err)
     ipcRenderer.on('updater:error', handler)
     return () => ipcRenderer.removeListener('updater:error', handler)
+  },
+  onUpdateUpToDate: (cb: (info: { latestVersion: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, info: { latestVersion: string }): void => cb(info)
+    ipcRenderer.on('updater:up-to-date', handler)
+    return () => ipcRenderer.removeListener('updater:up-to-date', handler)
   }
 })

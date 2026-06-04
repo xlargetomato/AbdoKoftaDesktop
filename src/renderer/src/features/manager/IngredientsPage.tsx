@@ -7,12 +7,24 @@ import {
   updateIngredient,
   deleteIngredient
 } from '@renderer/features/inventory/inventory-service'
+import { MdEdit, MdCheck, MdClose } from 'react-icons/md'
+
+interface EditState {
+  id: string
+  nameAr: string
+  unit: string
+  threshold: string
+}
+
+const UNITS = ['جرام', 'كيلوجرام', 'قطعة', 'مل', 'لتر']
 
 export function IngredientsPage(): React.ReactElement {
   const [items, setItems] = useState<Ingredient[]>([])
   const [nameAr, setNameAr] = useState('')
   const [unit, setUnit] = useState('جرام')
   const [threshold, setThreshold] = useState('')
+  const [editing, setEditing] = useState<EditState | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setItems(await listIngredients())
@@ -32,11 +44,37 @@ export function IngredientsPage(): React.ReactElement {
     })
     setNameAr('')
     setThreshold('')
+    setMessage('تم إضافة المكوّن')
+    await load()
+  }
+
+  function startEdit(i: Ingredient): void {
+    setEditing({
+      id: i.id,
+      nameAr: i.nameAr,
+      unit: i.unit,
+      threshold: i.lowStockThreshold != null ? String(i.lowStockThreshold) : ''
+    })
+  }
+
+  async function saveEdit(): Promise<void> {
+    if (!editing) return
+    await updateIngredient(editing.id, {
+      nameAr: editing.nameAr.trim(),
+      unit: editing.unit,
+      lowStockThreshold: editing.threshold ? Number(editing.threshold) : undefined
+    })
+    setEditing(null)
+    setMessage('تم حفظ التعديلات')
     await load()
   }
 
   return (
     <>
+      {message && (
+        <p className="form-message form-message--ok" role="status">{message}</p>
+      )}
+
       <div className="card">
         <h2 className="card__title">إضافة مكوّن</h2>
         <form onSubmit={(e) => void handleAdd(e)} className="page-toolbar">
@@ -47,10 +85,7 @@ export function IngredientsPage(): React.ReactElement {
           <label className="field" style={{ margin: 0 }}>
             <span>الوحدة</span>
             <select value={unit} onChange={(e) => setUnit(e.target.value)}>
-              <option value="جرام">جرام</option>
-              <option value="كيلوجرام">كيلوجرام</option>
-              <option value="قطعة">قطعة</option>
-              <option value="مل">مل</option>
+              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
           </label>
           <label className="field" style={{ margin: 0 }}>
@@ -62,11 +97,10 @@ export function IngredientsPage(): React.ReactElement {
               placeholder="اختياري"
             />
           </label>
-          <button type="submit" className="btn btn--primary">
-            إضافة
-          </button>
+          <button type="submit" className="btn btn--primary">إضافة</button>
         </form>
       </div>
+
       <div className="card">
         <h2 className="card__title">المكوّنات</h2>
         <table className="data-table">
@@ -80,33 +114,97 @@ export function IngredientsPage(): React.ReactElement {
             </tr>
           </thead>
           <tbody>
-            {items.map((i) => (
-              <tr key={i.id}>
-                <td>{i.nameAr}</td>
-                <td>{i.unit}</td>
-                <td>{i.lowStockThreshold ?? '—'}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="btn btn--secondary btn--sm"
-                    onClick={() =>
-                      void updateIngredient(i.id, { active: !i.active }).then(load)
-                    }
-                  >
-                    {i.active ? 'مفعّل' : 'معطّل'}
-                  </button>
-                </td>
-                <td>
-                  <ConfirmDeleteButton
-                    confirmMessage={`حذف "${i.nameAr}" نهائياً؟`}
-                    onConfirm={async () => {
-                      await deleteIngredient(i.id)
-                      await load()
-                    }}
-                  />
-                </td>
-              </tr>
-            ))}
+            {items.map((i) => {
+              const isEditing = editing?.id === i.id
+              return (
+                <tr key={i.id}>
+                  <td>
+                    {isEditing ? (
+                      <input
+                        className="inline-edit-input"
+                        value={editing.nameAr}
+                        onChange={(e) => setEditing({ ...editing, nameAr: e.target.value })}
+                        autoFocus
+                      />
+                    ) : i.nameAr}
+                  </td>
+                  <td>
+                    {isEditing ? (
+                      <select
+                        className="inline-edit-input"
+                        value={editing.unit}
+                        onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
+                      >
+                        {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    ) : i.unit}
+                  </td>
+                  <td>
+                    {isEditing ? (
+                      <input
+                        className="inline-edit-input"
+                        type="number"
+                        value={editing.threshold}
+                        onChange={(e) => setEditing({ ...editing, threshold: e.target.value })}
+                        placeholder="—"
+                      />
+                    ) : (i.lowStockThreshold ?? '—')}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${i.active ? 'btn--secondary' : 'btn--danger'}`}
+                      onClick={() => void updateIngredient(i.id, { active: !i.active }).then(load)}
+                    >
+                      {i.active ? 'مفعّل' : 'معطّل'}
+                    </button>
+                  </td>
+                  <td>
+                    <div className="table-actions">
+                      {isEditing ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn--primary btn--sm"
+                            onClick={() => void saveEdit()}
+                            aria-label="حفظ"
+                          >
+                            <MdCheck /> حفظ
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--secondary btn--sm"
+                            onClick={() => setEditing(null)}
+                            aria-label="إلغاء"
+                          >
+                            <MdClose />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn--secondary btn--sm"
+                            onClick={() => startEdit(i)}
+                            aria-label="تعديل"
+                          >
+                            <MdEdit /> تعديل
+                          </button>
+                          <ConfirmDeleteButton
+                            confirmMessage={`حذف "${i.nameAr}" نهائياً؟`}
+                            onConfirm={async () => {
+                              await deleteIngredient(i.id)
+                              setMessage(`تم حذف "${i.nameAr}"`)
+                              await load()
+                            }}
+                          />
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

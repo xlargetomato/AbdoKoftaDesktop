@@ -23,17 +23,21 @@ export function buildReceiptHtml(
   <meta charset="UTF-8" />
   <style>
     body { font-family: 'Cairo', Tahoma, sans-serif; font-size: 12px; margin: 8px; direction: rtl; }
-    h1 { font-size: 16px; text-align: center; margin: 0 0 8px; }
+    h1 { font-size: 16px; text-align: center; margin: 0 0 4px; }
+    .restaurant-info { text-align: center; margin: 0 0 10px; font-size: 11px; color: #444; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 4px; text-align: right; border-bottom: 1px dashed #ccc; }
     .totals { margin-top: 12px; }
     .totals div { display: flex; justify-content: space-between; margin: 4px 0; }
     .footer { text-align: center; margin-top: 16px; font-size: 10px; color: #666; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 8px 0; }
   </style>
 </head>
 <body>
   <h1>${escapeHtml(settings.restaurantNameAr)}</h1>
-  <p>طلب رقم: ${order.orderNumber}</p>
+  ${settings.phoneNumber ? `<p class="restaurant-info">📞 ${escapeHtml(settings.phoneNumber)}</p>` : ''}
+  <hr/>
+  <p>طلب رقم: <strong>${order.orderNumber}</strong></p>
   <p>${new Date(order.completedAt ?? order.createdAt).toLocaleString('ar-EG')}</p>
   <p>الكاشير: ${escapeHtml(order.cashierName)}</p>
   <table>
@@ -45,7 +49,7 @@ export function buildReceiptHtml(
   <div class="totals">
     <div><strong>الإجمالي</strong><strong>${formatMoney(order.total, settings)}</strong></div>
   </div>
-  ${settings.receiptFooterAr ? `<p class="footer">${escapeHtml(settings.receiptFooterAr)}</p>` : ''}
+  ${settings.receiptFooterAr ? `<hr/><p class="footer">${escapeHtml(settings.receiptFooterAr)}</p>` : ''}
 </body>
 </html>`
 }
@@ -67,11 +71,13 @@ export async function printReceipt(
   settings: AppSettings
 ): Promise<boolean> {
   const html = buildReceiptHtml(order, items, settings)
-  const api = (window as Window & { electronAPI?: { printReceipt: (h: string) => Promise<boolean> } })
-    .electronAPI
-  if (api?.printReceipt) {
-    return api.printReceipt(html)
+
+  // Use the globally typed electronAPI from the preload
+  if (window.electronAPI?.printReceipt) {
+    return window.electronAPI.printReceipt(html)
   }
+
+  // Fallback for non-Electron environments
   const w = window.open('', '_blank', 'width=400,height=600')
   if (!w) return false
   w.document.write(html)

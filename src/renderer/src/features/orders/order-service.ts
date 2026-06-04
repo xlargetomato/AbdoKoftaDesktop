@@ -73,6 +73,15 @@ export async function getSettings(): Promise<AppSettings> {
   return mapDoc<AppSettings>(snap as never)
 }
 
+export async function updateSettings(
+  patch: Partial<Pick<AppSettings, 'restaurantNameAr' | 'currencySymbol' | 'receiptFooterAr' | 'phoneNumber' | 'primaryColor'>>
+): Promise<void> {
+  await updateDoc(
+    doc(collections.settings(), SETTINGS_DOC_ID),
+    { ...patch, updatedAt: Date.now() }
+  )
+}
+
 export async function completeOrder(params: {
   cashierId: string
   cashierName: string
@@ -187,6 +196,22 @@ export async function listOrders(limit = 50): Promise<Order[]> {
     query(collections.orders(), orderBy('createdAt', 'desc'))
   )
   return snap.docs.map((d) => mapDoc<Order>(d)).slice(0, limit)
+}
+
+export async function archiveOrders(orderIds: string[]): Promise<void> {
+  await Promise.all(
+    orderIds.map((id) =>
+      updateDoc(doc(collections.orders(), id), { archived: true, updatedAt: Date.now() })
+    )
+  )
+}
+
+export async function unarchiveOrders(orderIds: string[]): Promise<void> {
+  await Promise.all(
+    orderIds.map((id) =>
+      updateDoc(doc(collections.orders(), id), { archived: false, updatedAt: Date.now() })
+    )
+  )
 }
 
 export async function getOrderItems(orderId: string): Promise<OrderItem[]> {

@@ -1,9 +1,12 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import { signOut, auth } from '@renderer/lib/firebase'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
 import { SyncStatusBadge } from '@renderer/features/sync/SyncStatusBadge'
 import { navLinkEnd, MdLogout, type NavItem } from '@renderer/config/navigation'
+import { MdSystemUpdate, MdClose, MdExpandMore, MdExpandLess } from 'react-icons/md'
+import { triggerCheckNow, useUpdateState } from '@renderer/components/UpdateNotification'
 
 interface AppShellProps {
   nav: NavItem[]
@@ -13,12 +16,43 @@ interface AppShellProps {
 export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   const displayName = useAuthStore((s) => s.user?.displayName)
   const navigate = useNavigate()
+  const location = useLocation()
+  const [currentVersion, setCurrentVersion] = useState<string>('...')
+  const [showPopup, setShowPopup] = useState(false)
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const updateState = useUpdateState()
+
+  useEffect(() => {
+    window.electronAPI?.getAppVersion().then(setCurrentVersion).catch(() => {})
+  }, [])
+
+  // Auto-open dropdown if current path matches a child
+  useEffect(() => {
+    for (const item of nav) {
+      if (item.children?.some((c) => location.pathname === c.to || location.pathname.startsWith(c.to + '/'))) {
+        setOpenDropdown(item.to)
+        return
+      }
+    }
+  }, [location.pathname, nav])
 
   async function handleLogout(): Promise<void> {
     await signOut(auth)
     useAuthStore.getState().setUser(null)
     navigate('/login')
   }
+
+  function handleCheckUpdate(): void {
+    setShowPopup(true)
+    triggerCheckNow()
+  }
+
+  const latestVersion =
+    updateState.phase === 'uptodate'    ? updateState.latestVersion :
+    updateState.phase === 'available'   ? updateState.version :
+    updateState.phase === 'downloading' ? updateState.version :
+    updateState.phase === 'ready'       ? updateState.version :
+    null
 
   return (
     <div className="app-shell">
@@ -28,6 +62,54 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
         <nav className="app-sidebar__nav">
           {nav.map((item) => {
             const Icon = item.icon
+
+            // Item with dropdown children
+            if (item.children) {
+              const isOpen = openDropdown === item.to
+              const isAnyChildActive = item.children.some(
+                (c) => location.pathname === c.to || location.pathname.startsWith(c.to + '/')
+              )
+              return (
+                <div key={item.to} className="app-sidebar__dropdown">
+                  <button
+                    type="button"
+                    className={`app-sidebar__link app-sidebar__dropdown-trigger${isAnyChildActive ? ' app-sidebar__link--active' : ''}`}
+                    onClick={() => setOpenDropdown(isOpen ? null : item.to)}
+                    aria-expanded={isOpen}
+                  >
+                    <span className="app-sidebar__link-row">
+                      <Icon className="app-sidebar__link-icon" aria-hidden="true" />
+                      <span className="app-sidebar__link-label">{item.label}</span>
+                      <span className="app-sidebar__dropdown-arrow">
+                        {isOpen ? <MdExpandLess /> : <MdExpandMore />}
+                      </span>
+                    </span>
+                    {item.hint && (
+                      <span className="app-sidebar__link-hint">{item.hint}</span>
+                    )}
+                  </button>
+
+                  {isOpen && (
+                    <div className="app-sidebar__dropdown-menu">
+                      {item.children.map((child) => (
+                        <NavLink
+                          key={child.to}
+                          to={child.to}
+                          end
+                          className={({ isActive }) =>
+                            `app-sidebar__dropdown-item${isActive ? ' app-sidebar__dropdown-item--active' : ''}`
+                          }
+                        >
+                          {child.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            }
+
+            // Regular item
             return (
               <NavLink
                 key={item.to}
@@ -56,6 +138,50 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
               {displayName}
             </span>
           )}
+
+          {/* ── Update button ── */}
+          <div className="app-sidebar__update-wrap">
+            <button
+              type="button"
+              className="btn btn--secondary btn--sm app-sidebar__update-btn"
+              onClick={handleCheckUpdate}
+              title="التحقق من التحديثات"
+            >
+              <MdSystemUpdate aria-hidden="true" />
+              تحديث
+            </button>
+
+            {showPopup && (
+              <div className="version-popup">
+                <button type="button" className="version-popup__close" onClick={() => setShowPopup(false)} aria-label="إغلاق">
+                  <MdClose />
+                </button>
+                <div className="version-popup__row">
+                  <span className="version-popup__label">الإصدار الحالي</span>
+                  <span className="version-popup__value">v{currentVersion}</span>
+                </div>
+                <div className="version-popup__row">
+                  <span className="version-popup__label">أحدث إصدار</span>
+                  <span className="version-popup__value">
+                    {updateState.phase === 'checking' && <span className="version-popup__checking">جارٍ التحقق…</span>}
+                    {updateState.phase === 'error' && <span className="version-popup__error">تعذّر الاتصال</span>}
+                    {latestVersion && (
+                      <span className={updateState.phase === 'uptodate' ? 'version-popup__same' : 'version-popup__newer'}>
+                        v{latestVersion}
+                      </span>
+                    )}
+                    {updateState.phase === 'idle' && <span className="version-popup__checking">جارٍ التحقق…</span>}
+                  </span>
+                </div>
+                {updateState.phase === 'uptodate' && <div className="version-popup__status version-popup__status--ok">✓ التطبيق محدّث</div>}
+                {(updateState.phase === 'available' || updateState.phase === 'downloading' || updateState.phase === 'ready') && (
+                  <div className="version-popup__status version-popup__status--new">↑ يتوفر تحديث جديد</div>
+                )}
+                {updateState.phase === 'error' && <div className="version-popup__status version-popup__status--err">{updateState.message}</div>}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             className="btn btn--secondary btn--sm app-sidebar__logout"

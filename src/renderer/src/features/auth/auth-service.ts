@@ -125,6 +125,16 @@ export async function updateUserActive(
   })
 }
 
+export async function updateUserProfile(
+  userId: string,
+  patch: Partial<Pick<AppUser, 'displayName'>>
+): Promise<void> {
+  await updateDoc(doc(collections.users(), userId), {
+    ...patch,
+    updatedAt: Date.now()
+  })
+}
+
 export async function deleteCashierAccount(userId: string): Promise<void> {
   const snap = await getDoc(doc(collections.users(), userId))
   if (!snap.exists()) return

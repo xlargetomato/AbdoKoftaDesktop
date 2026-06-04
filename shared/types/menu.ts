@@ -16,6 +16,7 @@ export interface MenuItem {
   imageUrl?: string
   active: boolean
   recipeId: string
+  sortOrder: number
   createdAt: number
   updatedAt: number
 }

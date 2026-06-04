@@ -4,7 +4,12 @@ export interface ElectronAPI {
   // Auth admin
   deleteAuthUser: (uid: string) => Promise<{ ok: boolean; error?: string }>
 
+  // App version & control
+  getAppVersion: () => Promise<string>
+  restartApp: () => Promise<void>
+
   // Auto-updater — actions
+  updaterCheckNow: () => Promise<void>
   updaterStartDownload: () => Promise<void>
   updaterQuitAndInstall: () => Promise<void>
 
@@ -17,6 +22,7 @@ export interface ElectronAPI {
   ) => () => void
   onUpdateDownloaded: (cb: (info: { version: string }) => void) => () => void
   onUpdaterError: (cb: (err: { message: string }) => void) => () => void
+  onUpdateUpToDate: (cb: (info: { latestVersion: string }) => void) => () => void
 }
 
 declare global {

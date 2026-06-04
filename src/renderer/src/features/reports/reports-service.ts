@@ -34,13 +34,47 @@ export interface ReportData {
   }
 }
 
+export type DateRange = 'today' | 'week' | 'month' | 'year' | 'all'
+
+export function getRangeBounds(range: DateRange): { from: number; to: number } {
+  const now = Date.now()
+  const startOfDay = (ts: number): number => {
+    const d = new Date(ts)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+  const to = now
+  switch (range) {
+    case 'today':
+      return { from: startOfDay(now), to }
+    case 'week':
+      return { from: now - 7 * 86400000, to }
+    case 'month':
+      return { from: now - 30 * 86400000, to }
+    case 'year':
+      return { from: now - 365 * 86400000, to }
+    case 'all':
+    default:
+      return { from: 0, to }
+  }
+}
+
 function dateKey(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10)
 }
 
-export async function getFullReport(): Promise<ReportData> {
+export async function getFullReport(range: DateRange = 'all'): Promise<ReportData> {
   const orders = await listOrders(1000)
-  const completed = orders.filter((o) => o.status === 'completed')
+  const { from, to } = getRangeBounds(range)
+
+  // All completed orders (unfiltered) for summary cards like todayOrders / weekRevenue
+  const allCompleted = orders.filter((o) => o.status === 'completed')
+
+  // Filtered completed orders for the selected range
+  const completed = allCompleted.filter((o) => {
+    const t = o.completedAt ?? o.createdAt
+    return t >= from && t <= to
+  })
 
   const today = dateKey(Date.now())
   const weekAgo = Date.now() - 7 * 86400000
@@ -73,11 +107,10 @@ export async function getFullReport(): Promise<ReportData> {
   const cashiers = Array.from(byCashier.values())
     .sort((a, b) => b.totalSales - a.totalSales)
 
-  // ── Top items (fetch order items for recent 100 orders) ───────────────
-  const recentCompleted = completed.slice(0, 100)
+  // ── Top items ─────────────────────────────────────────────────────────
   const itemMap = new Map<string, TopItem>()
   await Promise.all(
-    recentCompleted.map(async (o) => {
+    completed.slice(0, 200).map(async (o) => {
       const items = await getOrderItems(o.id)
       for (const item of items) {
         const existing = itemMap.get(item.menuItemId) ?? {
@@ -95,13 +128,13 @@ export async function getFullReport(): Promise<ReportData> {
     .sort((a, b) => b.quantity - a.quantity)
     .slice(0, 10)
 
-  // ── Summary stats ─────────────────────────────────────────────────────
+  // ── Summary stats (always based on filtered range) ────────────────────
   const totalRevenue = completed.reduce((s, o) => s + o.total, 0)
-  const todayOrders = completed.filter((o) => dateKey(o.completedAt ?? o.createdAt) === today).length
-  const todayRevenue = completed
+  const todayOrders = allCompleted.filter((o) => dateKey(o.completedAt ?? o.createdAt) === today).length
+  const todayRevenue = allCompleted
     .filter((o) => dateKey(o.completedAt ?? o.createdAt) === today)
     .reduce((s, o) => s + o.total, 0)
-  const weekRevenue = completed
+  const weekRevenue = allCompleted
     .filter((o) => (o.completedAt ?? o.createdAt) >= weekAgo)
     .reduce((s, o) => s + o.total, 0)
   const bestDay = daily.length > 0
@@ -124,9 +157,8 @@ export async function getFullReport(): Promise<ReportData> {
   }
 }
 
-// Keep old function for backward compat
 export async function getSalesReport(): Promise<DailySalesReport[]> {
-  const data = await getFullReport()
+  const data = await getFullReport('all')
   return data.daily
 }
 
@@ -135,7 +167,7 @@ export async function getSummaryStats(): Promise<{
   todayRevenue: number
   weekRevenue: number
 }> {
-  const data = await getFullReport()
+  const data = await getFullReport('all')
   return {
     todayOrders: data.summary.todayOrders,
     todayRevenue: data.summary.todayRevenue,

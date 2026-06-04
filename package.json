@@ -1,6 +1,6 @@
 {
   "name": "abdokofta-pos",
-  "version": "1.0.1",
+  "version": "1.9.2",
   "description": "Restaurant Management and POS - Arabic RTL",
   "main": "./out/main/index.js",
   "private": true,
@@ -22,19 +22,19 @@
     "electron-updater": "6.8.3",
     "firebase": "^11.6.0",
     "firebase-admin": "^13.4.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-icons": "5.6.0",
     "react-router-dom": "^7.6.0",
     "zustand": "^5.0.5"
   },
   "devDependencies": {
-    "@types/react": "^19.1.2",
-    "@types/react-dom": "^19.1.2",
+    "@types/react": "19.2.16",
+    "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
     "dotenv": "^16.5.0",
-    "electron": "^35.2.0",
-    "electron-builder": "^26.0.12",
+    "electron": "42.3.3",
+    "electron-builder": "26.8.1",
     "electron-vite": "^3.1.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
@@ -44,11 +44,13 @@
     "appId": "com.abdokofta.pos",
     "productName": "Abdo Kofta POS",
     "copyright": "Abdo Kofta",
+    "icon": "build/icon.ico",
     "publish": {
       "provider": "github",
       "owner": "xlargetomato",
       "repo": "AbdoKoftaDesktop",
-      "releaseType": "release"
+      "releaseType": "release",
+      "private": true
     },
     "directories": {
       "output": "release",
@@ -69,6 +71,7 @@
       "en-US"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -86,6 +89,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Abdo Kofta POS",
+      "installerIcon": "build/installerIcon.ico",
+      "uninstallerIcon": "build/installerIcon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
       "installerLanguages": [
         "en-US",
         "ar"

@@ -107,10 +107,14 @@ export function PosPage(): React.ReactElement {
         getOrderItems(order.id),
         getSettings()
       ])
-      await printReceipt(order, orderItems, settings)
+      // Clear cart immediately — don't wait for print dialog
       setCart([])
       setOrderNote('')
       setMessage(`تم إتمام الطلب #${order.orderNumber}`)
+      // Fire print in background — failure won't affect the order
+      printReceipt(order, orderItems, settings).catch((e) => {
+        console.warn('[print]', e)
+      })
     } catch (e) {
       const code = (e as { code?: string }).code
       if (code === 'permission-denied') {

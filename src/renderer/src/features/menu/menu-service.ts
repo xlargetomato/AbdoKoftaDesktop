@@ -52,6 +52,16 @@ export async function updateCategory(
   )
 }
 
+export async function updateMenuItem(
+  id: string,
+  patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'active'>>
+): Promise<void> {
+  await updateDoc(
+    doc(collections.menuItems(), id),
+    omitUndefined({ ...patch, updatedAt: Date.now() })
+  )
+}
+
 async function categoryHasMenuItems(categoryId: string): Promise<boolean> {
   const q = query(collections.menuItems(), where('categoryId', '==', categoryId))
   const snap = await getDocs(q)
@@ -74,7 +84,33 @@ export async function listMenuItems(activeOnly = false): Promise<MenuItem[]> {
   const snap = await getDocs(collections.menuItems())
   let items = snap.docs.map((d) => mapDoc<MenuItem>(d))
   if (activeOnly) items = items.filter((i) => i.active)
-  return items.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
+  // Sort by sortOrder, fallback to name for items without it
+  return items.sort((a, b) => {
+    const ao = a.sortOrder ?? 9999
+    const bo = b.sortOrder ?? 9999
+    if (ao !== bo) return ao - bo
+    return a.nameAr.localeCompare(b.nameAr, 'ar')
+  })
+}
+
+export async function reorderMenuItems(
+  items: Array<{ id: string; sortOrder: number }>
+): Promise<void> {
+  await Promise.all(
+    items.map(({ id, sortOrder }) =>
+      updateDoc(doc(collections.menuItems(), id), { sortOrder, updatedAt: Date.now() })
+    )
+  )
+}
+
+export async function reorderCategories(
+  cats: Array<{ id: string; sortOrder: number }>
+): Promise<void> {
+  await Promise.all(
+    cats.map(({ id, sortOrder }) =>
+      updateCategory(id, { sortOrder })
+    )
+  )
 }
 
 export async function getRecipeByMenuItem(
@@ -101,6 +137,7 @@ export async function createMenuItemWithRecipe(params: {
   descriptionAr?: string
   price: number
   lines: RecipeLine[]
+  sortOrder?: number
 }): Promise<{ item: MenuItem; recipe: Recipe }> {
   const now = Date.now()
   const recipeId = generateId()
@@ -123,6 +160,7 @@ export async function createMenuItemWithRecipe(params: {
     price: params.price,
     active: true,
     recipeId,
+    sortOrder: params.sortOrder ?? 9999,
     createdAt: now,
     updatedAt: now
   }
@@ -136,18 +174,6 @@ export async function createMenuItemWithRecipe(params: {
     omitUndefined(stripId(item) as Record<string, unknown>)
   )
   return { item, recipe }
-}
-
-export async function updateMenuItem(
-  id: string,
-  patch: Partial<
-    Pick<MenuItem, 'nameAr' | 'descriptionAr' | 'price' | 'categoryId' | 'active'>
-  >
-): Promise<void> {
-  await updateDoc(
-    doc(collections.menuItems(), id),
-    omitUndefined({ ...patch, updatedAt: Date.now() })
-  )
 }
 
 export async function updateRecipe(

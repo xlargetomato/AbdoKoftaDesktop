@@ -23,9 +23,9 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    title: 'عبده كفتة - نقطة البيع',
+    title: 'عبده كفتة',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/index.cjs'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -36,7 +36,7 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
     if (isDev) {
-      toggleDevTools(mainWindow)
+      mainWindow?.webContents.openDevTools({ mode: 'detach', activate: false })
     }
   })
 
@@ -66,23 +66,57 @@ app.whenReady().then(() => {
     Menu.setApplicationMenu(null)
   }
 
+  // Init updater in both dev and prod
+  // (forceDevUpdateConfig handles the dev case via dev-app-update.yml)
+  initAutoUpdater()
+
+  ipcMain.handle('app:get-version', () => app.getVersion())
+
+  ipcMain.handle('app:restart', () => {
+    app.relaunch()
+    app.exit(0)
+  })
+
   ipcMain.handle('print:receipt', async (_, html: string) => {
     const printWindow = new BrowserWindow({
+      width: 380,
+      height: 600,
       show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true }
     })
-    await printWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
-    )
-    return new Promise<boolean>((resolve) => {
-      printWindow.webContents.print(
-        { silent: false, printBackground: true },
-        (success) => {
-          printWindow.close()
-          resolve(success)
-        }
+
+    try {
+      await printWindow.loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
       )
-    })
+
+      // Wait for content to fully render before printing
+      await new Promise<void>((resolve) => setTimeout(resolve, 500))
+
+      return await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => {
+          if (!printWindow.isDestroyed()) printWindow.close()
+          resolve(false)
+        }, 30000)
+
+        printWindow.webContents.print(
+          {
+            silent: false,
+            printBackground: true,
+            pageSize: { width: 80000, height: 297000 } // 80mm receipt width in microns
+          },
+          (success) => {
+            clearTimeout(timeout)
+            if (!printWindow.isDestroyed()) printWindow.close()
+            resolve(success)
+          }
+        )
+      })
+    } catch (e) {
+      console.error('[print]', e)
+      if (!printWindow.isDestroyed()) printWindow.close()
+      return false
+    }
   })
 
   ipcMain.handle('auth:delete-user', async (_, uid: string) => {
@@ -96,21 +130,6 @@ app.whenReady().then(() => {
   })
 
   createWindow()
-
-  // Start checking for updates (only in production builds)
-  if (!isDev) {
-    // Wait for window to be ready before sending IPC events
-    const checkAfterReady = (): void => {
-      initAutoUpdater()
-    }
-    if (mainWindow) {
-      mainWindow.webContents.once('did-finish-load', checkAfterReady)
-    } else {
-      app.once('browser-window-created', (_, win) => {
-        win.webContents.once('did-finish-load', checkAfterReady)
-      })
-    }
-  }
 
   if (isDev) {
     const shortcuts = [

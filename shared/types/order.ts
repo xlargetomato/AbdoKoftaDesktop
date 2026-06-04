@@ -9,6 +9,7 @@ export interface Order {
   subtotal: number
   total: number
   noteAr?: string
+  archived?: boolean
   createdAt: number
   updatedAt: number
   completedAt?: number
