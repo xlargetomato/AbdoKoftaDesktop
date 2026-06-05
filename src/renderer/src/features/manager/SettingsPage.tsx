@@ -163,9 +163,6 @@ export function SettingsPage(): React.ReactElement {
             </button>
           </div>
         </form>
-        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--color-border-light)' }}>
-          <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: 0 }}>رقم الطلب التالي: <strong>{settings.nextOrderNumber}</strong></p>
-        </div>
       </div>
 
       {/* ── Theme card ── */}
