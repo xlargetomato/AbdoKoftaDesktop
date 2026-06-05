@@ -1736,7 +1736,7 @@ textarea {
 
 .cashier-history__toolbar {
   display: grid;
-  grid-template-columns: auto minmax(360px, 1fr) auto;
+  grid-template-columns: auto minmax(360px, 1fr);
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -1819,12 +1819,40 @@ textarea {
   padding: 0;
 }
 
+.cashier-history__selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.cashier-history__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cashier-history__select-all input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
 .cashier-history__bulk-actions {
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
   min-width: max-content;
+}
+
+.cashier-history__selection-bar .cashier-history__bulk-actions {
+  justify-content: flex-start;
 }
 
 .cashier-history__selected-count {

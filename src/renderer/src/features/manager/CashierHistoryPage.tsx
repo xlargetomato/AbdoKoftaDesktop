@@ -183,23 +183,6 @@ export function CashierHistoryPage(): React.ReactElement {
           )}
         </div>
 
-        {/* Bulk actions */}
-        {selected.size > 0 && (
-          <div className="cashier-history__bulk-actions">
-            <span className="cashier-history__selected-count">
-              {selected.size} محدد
-            </span>
-            {viewMode === 'active' ? (
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleArchive()}>
-                <MdArchive /> أرشفة المحدد
-              </button>
-            ) : (
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleUnarchive()}>
-                <MdUnarchive /> إلغاء الأرشفة
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {actionMsg && (
@@ -235,17 +218,32 @@ export function CashierHistoryPage(): React.ReactElement {
       ) : (
         <>
           {/* Select all */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <input
-              type="checkbox"
-              id="select-all"
-              checked={selected.size === filtered.length && filtered.length > 0}
-              onChange={selectAll}
-              style={{ width: 16, height: 16, cursor: 'pointer' }}
-            />
-            <label htmlFor="select-all" style={{ fontSize: '0.85rem', cursor: 'pointer', userSelect: 'none' }}>
-              تحديد الكل ({filtered.length})
+          <div className="cashier-history__selection-bar">
+            <label className="cashier-history__select-all" htmlFor="select-all">
+              <input
+                type="checkbox"
+                id="select-all"
+                checked={selected.size === filtered.length && filtered.length > 0}
+                onChange={selectAll}
+              />
+              <span>تحديد الكل ({filtered.length})</span>
             </label>
+            {selected.size > 0 && (
+              <div className="cashier-history__bulk-actions">
+                <span className="cashier-history__selected-count">
+                  {selected.size} محدد
+                </span>
+                {viewMode === 'active' ? (
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleArchive()}>
+                    <MdArchive /> أرشفة المحدد
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleUnarchive()}>
+                    <MdUnarchive /> إلغاء الأرشفة
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Grouped by date */}
