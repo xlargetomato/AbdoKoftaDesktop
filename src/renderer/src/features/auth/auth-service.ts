@@ -22,7 +22,7 @@ const AUTH_ERRORS: Record<string, string> = {
   'auth/wrong-password': 'كلمة المرور غير صحيحة',
   'auth/user-not-found': 'لا يوجد حساب بهذا المستخدم',
   'auth/invalid-email': 'اسم المستخدم غير صالح',
-  'auth/too-many-requests': 'محاولات كثيرة — انتظر قليلاً ثم حاول مجدداً',
+  'auth/too-many-requests': 'محاولات كثيرة - انتظر قليلا ثم حاول مجددا',
   'auth/network-request-failed': 'تحقق من الاتصال بالإنترنت',
   'auth/email-already-in-use': 'اسم المستخدم مستخدم بالفعل'
 }
@@ -30,7 +30,7 @@ const AUTH_ERRORS: Record<string, string> = {
 function toAuthError(err: unknown): Error {
   const code = (err as { code?: string })?.code
   if (code === 'permission-denied') {
-    return new Error('لا يمكن قراءة ملف المستخدم — شغّل: npm run deploy:rules')
+    return new Error('لا يمكن قراءة ملف المستخدم - شغّل: npm run deploy:rules')
   }
   if (code && AUTH_ERRORS[code]) return new Error(AUTH_ERRORS[code]!)
   if (err instanceof Error) return err
@@ -50,6 +50,7 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
       email: data.email as string,
       username: (data.username as string) || (data.email as string).split('@')[0],
       displayName: data.displayName as string,
+      cashierCode: data.cashierCode as string | undefined,
       role: data.role as AppUser['role'],
       active: data.active as boolean,
       pinHash: data.pinHash as string | undefined,
@@ -62,7 +63,7 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
   }
 }
 
-/** Login with username — converts to email internally */
+/** Login with username - converts to email internally */
 export async function loginAndLoadUser(
   username: string,
   password: string
@@ -77,7 +78,7 @@ export async function loginAndLoadUser(
   const appUser = await fetchAppUser(cred.user.uid)
   if (!appUser || !appUser.active) {
     await signOut(auth)
-    throw new Error('الحساب غير موجود في قاعدة البيانات — شغّل: npm run seed')
+    throw new Error('الحساب غير موجود في قاعدة البيانات - شغّل: npm run seed')
   }
   return appUser
 }
@@ -86,14 +87,19 @@ export async function createCashierAccount(
   data: AppUserCreate,
   createdByManagerId: string
 ): Promise<AppUser> {
-  const email = usernameToEmail(data.username)
+  const username = data.username.toLowerCase().trim()
+  const email = usernameToEmail(username)
+  if (data.role === 'cashier' && data.cashierCode) {
+    await assertCashierCodeAvailable(data.cashierCode)
+  }
   const cred = await createUserWithEmailAndPassword(auth, email, data.password)
   const now = Date.now()
   const appUser: AppUser = {
     id: cred.user.uid,
     email,
-    username: data.username.toLowerCase().trim(),
+    username,
     displayName: data.displayName,
+    cashierCode: data.cashierCode?.toUpperCase(),
     role: data.role,
     active: true,
     createdAt: now,
@@ -104,6 +110,20 @@ export async function createCashierAccount(
     createdBy: createdByManagerId
   })
   return appUser
+}
+
+async function assertCashierCodeAvailable(
+  cashierCode: string,
+  exceptUserId?: string
+): Promise<void> {
+  const code = cashierCode.trim().toUpperCase()
+  if (!/^[A-Z0-9]{2}$/.test(code)) {
+    throw new Error('كود الكاشير يجب أن يكون حرفين أو رقمين فقط')
+  }
+  const q = query(collections.users(), where('cashierCode', '==', code))
+  const snap = await getDocs(q)
+  const taken = snap.docs.some((d) => d.id !== exceptUserId)
+  if (taken) throw new Error('كود الكاشير مستخدم بالفعل')
 }
 
 export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
@@ -118,8 +138,12 @@ export async function updateUserActive(userId: string, active: boolean): Promise
 
 export async function updateUserProfile(
   userId: string,
-  patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash'>>
+  patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash' | 'cashierCode'>>
 ): Promise<void> {
+  if (patch.cashierCode) {
+    await assertCashierCodeAvailable(patch.cashierCode, userId)
+    patch.cashierCode = patch.cashierCode.toUpperCase()
+  }
   await updateDoc(doc(collections.users(), userId), { ...patch, updatedAt: Date.now() })
 }
 

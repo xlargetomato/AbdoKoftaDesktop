@@ -157,6 +157,16 @@ textarea {
   letter-spacing: 0.04em;
 }
 
+.field--checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+.field--checkbox input {
+  width: 18px;
+  min-height: 18px;
+}
+
 .field input,
 .field select,
 .field textarea {
@@ -407,6 +417,21 @@ textarea {
 .app-sidebar__link-label {
   font-weight: 800;
   font-size: 0.85rem;
+}
+
+.app-sidebar__badge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: auto;
+  background: var(--color-danger);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.65);
+  font-size: 0.72rem;
+  font-weight: 900;
 }
 
 .app-sidebar__link-hint {
@@ -1710,13 +1735,129 @@ textarea {
 }
 
 .cashier-history__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(360px, 1fr) auto;
+  gap: 12px;
   align-items: center;
   padding: 12px;
   background: var(--color-surface);
   border: 2px solid var(--color-border);
+}
+
+.pos-item-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pos-weight-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+
+.pos-weight-btn {
+  min-height: 28px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pos-stock-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pos-stock-alerts__item {
+  padding: 6px 8px;
+  border: 2px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.pos-stock-alerts__item--out {
+  border-color: var(--color-danger);
+  background: #fef2f2;
+  color: var(--color-danger);
+}
+
+.cashier-history__toolbar .reports-filter__options {
+  justify-self: start;
+}
+
+.cashier-history__filters {
+  display: grid;
+  grid-template-columns: 24px minmax(180px, 1fr) 160px auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+.cashier-history__filter-icon {
+  color: var(--color-muted);
+  justify-self: center;
+  flex-shrink: 0;
+}
+
+.cashier-history__cashier-filter {
+  min-width: 0;
+}
+
+.cashier-history__filters input[type="date"] {
+  min-width: 150px;
+}
+
+.cashier-history__clear-date {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.cashier-history__bulk-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: max-content;
+}
+
+.cashier-history__selected-count {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .cashier-history__toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .cashier-history__toolbar .reports-filter__options,
+  .cashier-history__filters,
+  .cashier-history__bulk-actions {
+    justify-self: stretch;
+  }
+
+  .cashier-history__bulk-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .cashier-history__filters {
+    grid-template-columns: 24px 1fr;
+  }
+
+  .cashier-history__filters input[type="date"],
+  .cashier-history__clear-date {
+    grid-column: 2;
+  }
 }
 
 .cashier-history__day {

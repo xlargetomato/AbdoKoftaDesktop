@@ -52,10 +52,30 @@ service cloud.firestore {
       allow create: if isStaff();
       allow update, delete: if false;
     }
+    match /cash_drawer_transactions/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+    match /shifts/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff();
+      allow delete: if false;
+    }
+    match /suppliers/{id} {
+      allow read: if isStaff();
+      allow write: if isManager();
+    }
+    match /supplier_transactions/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
     match /orders/{id} {
       allow read: if isStaff();
       allow create: if isCashier() || isManager();
-      allow update: if isManager();
+      allow update: if isStaff();
     }
     match /order_items/{id} {
       allow read: if isStaff();

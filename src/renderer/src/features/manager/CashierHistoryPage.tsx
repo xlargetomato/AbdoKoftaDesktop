@@ -161,11 +161,10 @@ export function CashierHistoryPage(): React.ReactElement {
         </div>
 
         {/* Filters */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <MdFilterList style={{ color: 'var(--color-muted)' }} />
+        <div className="cashier-history__filters">
+          <MdFilterList className="cashier-history__filter-icon" />
           <select
-            className="inline-edit-input"
-            style={{ minWidth: 140 }}
+            className="inline-edit-input cashier-history__cashier-filter"
             value={selectedCashier}
             onChange={(e) => setSelectedCashier(e.target.value)}
           >
@@ -177,18 +176,17 @@ export function CashierHistoryPage(): React.ReactElement {
             className="inline-edit-input"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
-            style={{ maxWidth: 160 }}
           />
           {selectedDate && (
-            <button type="button" className="btn btn--secondary btn--sm"
+            <button type="button" className="btn btn--secondary btn--sm cashier-history__clear-date"
               onClick={() => setSelectedDate('')}>✕</button>
           )}
         </div>
 
         {/* Bulk actions */}
         {selected.size > 0 && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+          <div className="cashier-history__bulk-actions">
+            <span className="cashier-history__selected-count">
               {selected.size} محدد
             </span>
             {viewMode === 'active' ? (

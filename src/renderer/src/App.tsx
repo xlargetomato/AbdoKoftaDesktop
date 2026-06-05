@@ -24,6 +24,11 @@ const OrderHistoryPage = lazy(() =>
     default: m.OrderHistoryPage
   }))
 )
+const CashierInventoryPage = lazy(() =>
+  import('@renderer/features/pos/CashierInventoryPage').then((m) => ({
+    default: m.CashierInventoryPage
+  }))
+)
 const ManagerDashboard = lazy(() =>
   import('@renderer/features/manager/ManagerDashboard').then((m) => ({
     default: m.ManagerDashboard
@@ -47,6 +52,16 @@ const MenuManagementPage = lazy(() =>
 const CashiersPage = lazy(() =>
   import('@renderer/features/manager/CashiersPage').then((m) => ({
     default: m.CashiersPage
+  }))
+)
+const ShiftsPage = lazy(() =>
+  import('@renderer/features/manager/ShiftsPage').then((m) => ({
+    default: m.ShiftsPage
+  }))
+)
+const SuppliersPage = lazy(() =>
+  import('@renderer/features/manager/SuppliersPage').then((m) => ({
+    default: m.SuppliersPage
   }))
 )
 const ReportsPage = lazy(() =>
@@ -140,6 +155,14 @@ export default function App(): React.ReactElement {
                 </LazyPage>
               }
             />
+            <Route
+              path="/pos/inventory"
+              element={
+                <LazyPage>
+                  <CashierInventoryPage />
+                </LazyPage>
+              }
+            />
           </Route>
         </Route>
 
@@ -182,6 +205,22 @@ export default function App(): React.ReactElement {
               element={
                 <LazyPage>
                   <CashiersPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/shifts"
+              element={
+                <LazyPage>
+                  <ShiftsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/suppliers"
+              element={
+                <LazyPage>
+                  <SuppliersPage />
                 </LazyPage>
               }
             />

@@ -54,7 +54,7 @@ export async function updateCategory(
 
 export async function updateMenuItem(
   id: string,
-  patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'active'>>
+  patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'isWeighted' | 'active'>>
 ): Promise<void> {
   await updateDoc(
     doc(collections.menuItems(), id),
@@ -136,6 +136,7 @@ export async function createMenuItemWithRecipe(params: {
   nameAr: string
   descriptionAr?: string
   price: number
+  isWeighted?: boolean
   lines: RecipeLine[]
   sortOrder?: number
 }): Promise<{ item: MenuItem; recipe: Recipe }> {
@@ -147,6 +148,8 @@ export async function createMenuItemWithRecipe(params: {
     id: recipeId,
     menuItemId: itemId,
     nameAr: params.nameAr,
+    basisQuantity: params.isWeighted ? 1 : undefined,
+    basisUnit: params.isWeighted ? 'kg' : undefined,
     lines: params.lines,
     createdAt: now,
     updatedAt: now
@@ -158,6 +161,7 @@ export async function createMenuItemWithRecipe(params: {
     nameAr: params.nameAr,
     descriptionAr: params.descriptionAr,
     price: params.price,
+    isWeighted: params.isWeighted,
     active: true,
     recipeId,
     sortOrder: params.sortOrder ?? 9999,

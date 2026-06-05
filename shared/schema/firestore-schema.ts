@@ -12,7 +12,11 @@ import type {
   OrderItem,
   Payment,
   Recipe,
-  AppSettings
+  AppSettings,
+  Shift,
+  CashDrawerTransaction,
+  Supplier,
+  SupplierTransaction
 } from '../types'
 
 export type FirestoreDoc<T> = T
@@ -27,6 +31,10 @@ export interface FirestoreSchema {
   orders: FirestoreDoc<Order>
   order_items: FirestoreDoc<OrderItem>
   payments: FirestoreDoc<Payment>
+  shifts: FirestoreDoc<Shift>
+  cash_drawer_transactions: FirestoreDoc<CashDrawerTransaction>
+  suppliers: FirestoreDoc<Supplier>
+  supplier_transactions: FirestoreDoc<SupplierTransaction>
   settings: FirestoreDoc<AppSettings>
 }
 

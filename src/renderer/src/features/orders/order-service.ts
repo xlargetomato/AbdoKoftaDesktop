@@ -27,12 +27,16 @@ import { SETTINGS_DOC_ID } from '@shared/schema/firestore-schema'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
 import { nextLocalOrderReference } from '@renderer/lib/offline/order-number'
+import { ensureOpenShift } from '../shifts/shift-service'
+import { recordCashDrawerTransaction } from '../cash/cash-service'
 
 export interface CartLine {
   menuItemId: string
   nameAr: string
   unitPrice: number
   quantity: number
+  unitLabel?: string
+  weightGrams?: number
   noteAr?: string
 }
 
@@ -65,6 +69,7 @@ export async function updateSettings(
 export async function completeOrder(params: {
   cashierId: string
   cashierName: string
+  cashierCode?: string
   lines: CartLine[]
   orderNoteAr?: string
   paymentMethod: 'cash' | 'card'
@@ -75,13 +80,19 @@ export async function completeOrder(params: {
 async function _completeOrder(params: {
   cashierId: string
   cashierName: string
+  cashierCode?: string
   lines: CartLine[]
   orderNoteAr?: string
   paymentMethod: 'cash' | 'card'
 }): Promise<Order> {
   const subtotal = orderSubtotal(params.lines)
   const total = orderTotal(subtotal)
-  const { orderNumber, orderCode } = nextLocalOrderReference()
+  const shift = await ensureOpenShift({
+    cashierId: params.cashierId,
+    cashierName: params.cashierName,
+    cashierCode: params.cashierCode
+  })
+  const { orderNumber, orderCode } = nextLocalOrderReference(params.cashierCode)
   const now = Date.now()
   const orderId = generateId()
 
@@ -90,8 +101,10 @@ async function _completeOrder(params: {
     orderNumber,
     orderCode,
     status: 'completed',
+    shiftId: shift.id,
     cashierId: params.cashierId,
     cashierName: params.cashierName,
+    cashierCode: params.cashierCode,
     subtotal,
     total,
     noteAr: params.orderNoteAr,
@@ -115,6 +128,8 @@ async function _completeOrder(params: {
       nameAr: line.nameAr,
       unitPrice: line.unitPrice,
       quantity: line.quantity,
+      unitLabel: line.unitLabel,
+      weightGrams: line.weightGrams,
       lineTotal: lineTotal(line.unitPrice, line.quantity),
       noteAr: line.noteAr
     }
@@ -138,7 +153,8 @@ async function _completeOrder(params: {
     orderId,
     orderItems,
     params.cashierId,
-    now
+    now,
+    shift.id
   )
   for (const tx of inventoryTransactions) {
     batch.set(
@@ -149,6 +165,14 @@ async function _completeOrder(params: {
 
   await batch.commit()
 
+  await recordCashDrawerTransaction({
+    type: 'sale',
+    amount: total,
+    shiftId: shift.id,
+    orderId,
+    createdBy: params.cashierId
+  })
+
   return order
 }
 
@@ -156,7 +180,8 @@ async function inventoryTransactionsForOrder(
   orderId: string,
   items: OrderItem[],
   createdBy: string,
-  createdAt: number
+  createdAt: number,
+  shiftId?: string
 ): Promise<InventoryTransaction[]> {
   const allLines: Array<{
     ingredientId: string
@@ -181,13 +206,77 @@ async function inventoryTransactionsForOrder(
       ingredientId: line.ingredientId,
       type: 'sale',
       quantity: line.quantity,
-      unit: line.unit,
-      referenceType: 'order',
-      referenceId: orderId,
-      noteAr: 'خصم تلقائي من الطلب',
+    unit: line.unit,
+    referenceType: 'order',
+    referenceId: orderId,
+    shiftId,
+    noteAr: 'خصم تلقائي من الطلب',
       createdBy,
       createdAt
     }))
+}
+
+export async function cancelOrder(params: {
+  orderId: string
+  cancelledBy: string
+  reasonAr?: string
+  inventoryMode: 'return' | 'waste'
+}): Promise<void> {
+  const orderSnap = await getDoc(doc(collections.orders(), params.orderId))
+  if (!orderSnap.exists()) return
+  const order = mapDoc<Order>(orderSnap)
+
+  await updateDoc(doc(collections.orders(), params.orderId), {
+    status: 'cancelled',
+    cancelledAt: Date.now(),
+    cancelledBy: params.cancelledBy,
+    cancelReasonAr: params.reasonAr,
+    cancelInventoryMode: params.inventoryMode,
+    updatedAt: Date.now()
+  })
+
+  await recordCashDrawerTransaction({
+    type: 'sale',
+    amount: -order.total,
+    shiftId: order.shiftId,
+    orderId: order.id,
+    noteAr: params.reasonAr || 'إلغاء طلب',
+    createdBy: params.cancelledBy
+  })
+
+  if (params.inventoryMode === 'return') {
+    await reverseInventoryForOrder(order.id, params.cancelledBy)
+  }
+}
+
+async function reverseInventoryForOrder(orderId: string, createdBy: string): Promise<void> {
+  const snap = await getDocs(query(collections.inventoryTransactions(), where('referenceId', '==', orderId)))
+  const saleTransactions = snap.docs
+    .map((d) => mapDoc<InventoryTransaction>(d))
+    .filter((tx) => tx.type === 'sale')
+
+  const batch = writeBatch(getDb())
+  const now = Date.now()
+  for (const tx of saleTransactions) {
+    const reversal: InventoryTransaction = {
+      id: generateId(),
+      ingredientId: tx.ingredientId,
+      type: 'sale_reversal',
+      quantity: -tx.quantity,
+      unit: tx.unit,
+      referenceType: 'order',
+      referenceId: orderId,
+      shiftId: tx.shiftId,
+      noteAr: 'عكس خصم مخزون لطلب ملغي',
+      createdBy,
+      createdAt: now
+    }
+    batch.set(
+      doc(collections.inventoryTransactions(), reversal.id),
+      omitUndefined(reversal as unknown as Record<string, unknown>)
+    )
+  }
+  await batch.commit()
 }
 
 export async function listOrders(limit = 50): Promise<Order[]> {

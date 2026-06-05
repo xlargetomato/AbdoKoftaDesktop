@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { Order, OrderItem } from '@shared/types'
-import { listOrders, getOrderItems, getSettings } from '@renderer/features/orders/order-service'
+import { cancelOrder, listOrders, getOrderItems, getSettings } from '@renderer/features/orders/order-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
 import { orderReference } from '@shared/services/order-reference'
+import { useAuthStore } from '@renderer/features/auth/auth-store'
 
 interface OrderDetails {
   order: Order
@@ -10,16 +11,21 @@ interface OrderDetails {
 }
 
 export function OrderHistoryPage(): React.ReactElement {
+  const user = useAuthStore((s) => s.user)!
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [details, setDetails] = useState<OrderDetails | null>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [message, setMessage] = useState('')
+
+  async function load(): Promise<void> {
+    const o = await listOrders(100)
+    setOrders(o.filter((x) => x.status === 'completed' || x.status === 'cancelled'))
+    setLoading(false)
+  }
 
   useEffect(() => {
-    void listOrders(100).then((o) => {
-      setOrders(o.filter((x) => x.status === 'completed'))
-      setLoading(false)
-    })
+    void load()
   }, [])
 
   async function openDetails(order: Order): Promise<void> {
@@ -37,6 +43,21 @@ export function OrderHistoryPage(): React.ReactElement {
     await printReceipt(order, items, settings)
   }
 
+  async function handleCancel(order: Order): Promise<void> {
+    const wasted = window.confirm(
+      'هل يعتبر مخزون هذا الطلب هدر؟\nOK = هدر ولا يرجع للمخزون\nCancel = يرجع للمخزون'
+    )
+    const reasonAr = window.prompt('سبب الإلغاء', '') ?? undefined
+    await cancelOrder({
+      orderId: order.id,
+      cancelledBy: user.id,
+      reasonAr,
+      inventoryMode: wasted ? 'waste' : 'return'
+    })
+    setMessage('تم إلغاء الطلب')
+    await load()
+  }
+
   if (loading) return <p className="app-loading">جاري التحميل...</p>
 
   const cur = 'ج.م'
@@ -45,10 +66,12 @@ export function OrderHistoryPage(): React.ReactElement {
     <>
       <div className="card">
         <h2 className="card__title">سجل الطلبات</h2>
+        {message && <p className="form-message form-message--ok">{message}</p>}
         <table className="data-table">
           <thead>
             <tr>
               <th>رقم الطلب</th>
+              <th>Status</th>
               <th>التاريخ</th>
               <th>الكاشير</th>
               <th>الإجمالي</th>
@@ -59,6 +82,7 @@ export function OrderHistoryPage(): React.ReactElement {
             {orders.map((o) => (
               <tr key={o.id}>
                 <td>#{orderReference(o)}</td>
+                <td>{o.status === 'cancelled' ? 'Cancelled' : 'Completed'}</td>
                 <td>{new Date(o.completedAt ?? o.createdAt).toLocaleString('ar-EG')}</td>
                 <td>{o.cashierName}</td>
                 <td>{o.total.toFixed(2)} {cur}</td>
@@ -79,6 +103,9 @@ export function OrderHistoryPage(): React.ReactElement {
                     >
                       طباعة
                     </button>
+                    {o.status === 'completed' && (
+                      <button type="button" className="btn btn--danger btn--sm" onClick={() => void handleCancel(o)}>Cancel</button>
+                    )}
                   </div>
                 </td>
               </tr>

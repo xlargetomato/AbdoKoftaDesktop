@@ -9,6 +9,10 @@ export const COLLECTIONS = {
   orders: 'orders',
   orderItems: 'order_items',
   payments: 'payments',
+  shifts: 'shifts',
+  cashDrawerTransactions: 'cash_drawer_transactions',
+  suppliers: 'suppliers',
+  supplierTransactions: 'supplier_transactions',
   settings: 'settings'
 } as const
 

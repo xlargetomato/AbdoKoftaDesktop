@@ -16,7 +16,7 @@ export function getTerminalId(): string {
   return terminalId
 }
 
-export function nextLocalOrderReference(): {
+export function nextLocalOrderReference(prefix?: string): {
   orderNumber: number
   orderCode: string
 } {
@@ -25,7 +25,7 @@ export function nextLocalOrderReference(): {
   const orderNumber = Math.max(base, last + 1)
   localStorage.setItem(LAST_ORDER_KEY, String(orderNumber))
 
-  const terminalId = getTerminalId().toUpperCase()
+  const terminalId = (prefix?.trim() || getTerminalId()).toUpperCase()
   return {
     orderNumber,
     orderCode: `${terminalId}-${orderNumber}`

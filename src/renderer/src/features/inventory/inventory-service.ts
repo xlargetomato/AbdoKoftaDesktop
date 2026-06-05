@@ -80,6 +80,8 @@ export async function recordInventoryTransaction(params: {
   referenceId?: string
   noteAr?: string
   createdBy: string
+  shiftId?: string
+  supplierId?: string
 }): Promise<InventoryTransaction> {
   const tx: InventoryTransaction = {
     id: generateId(),
@@ -89,6 +91,8 @@ export async function recordInventoryTransaction(params: {
     unit: params.unit,
     referenceType: params.referenceType,
     referenceId: params.referenceId,
+    shiftId: params.shiftId,
+    supplierId: params.supplierId,
     noteAr: params.noteAr,
     createdBy: params.createdBy,
     createdAt: Date.now()
@@ -142,6 +146,8 @@ export async function recordPurchase(params: {
   unit: string
   noteAr?: string
   createdBy: string
+  shiftId?: string
+  supplierId?: string
 }): Promise<InventoryTransaction> {
   return recordInventoryTransaction({
     ...params,

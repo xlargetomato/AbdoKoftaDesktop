@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { MenuCategory, MenuItem } from '@shared/types'
+import { getIngredientStocks } from '@renderer/features/inventory/inventory-service'
 import { listCategories, listMenuItems } from '@renderer/features/menu/menu-service'
 import {
   completeOrder,
@@ -15,15 +16,25 @@ import {
   orderTotal
 } from '@shared/services/order-calculator'
 import { orderReference } from '@shared/services/order-reference'
+import { closeShift, getOpenShiftForCashier } from '@renderer/features/shifts/shift-service'
 
 interface LocalCartLine extends CartLine {
   key: string
 }
 
+const WEIGHT_SHORTCUTS = [
+  { label: '1/8', kg: 0.125 },
+  { label: '1/4', kg: 0.25 },
+  { label: '1/3', kg: 1 / 3 },
+  { label: '1/2', kg: 0.5 },
+  { label: '1', kg: 1 }
+]
+
 export function PosPage(): React.ReactElement {
   const user = useAuthStore((s) => s.user)!
   const [categories, setCategories] = useState<MenuCategory[]>([])
   const [items, setItems] = useState<MenuItem[]>([])
+  const [stockAlerts, setStockAlerts] = useState<{ out: string[]; low: string[] }>({ out: [], low: [] })
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<LocalCartLine[]>([])
@@ -32,12 +43,19 @@ export function PosPage(): React.ReactElement {
   const [message, setMessage] = useState('')
 
   const load = useCallback(async () => {
-    const [cats, menu] = await Promise.all([
+    const [cats, menu, stocks] = await Promise.all([
       listCategories(),
-      listMenuItems(true)
+      listMenuItems(true),
+      getIngredientStocks()
     ])
     setCategories(cats.filter((c) => c.active))
     setItems(menu)
+    setStockAlerts({
+      out: stocks.filter((s) => s.quantity <= 0).map((s) => s.nameAr),
+      low: stocks
+        .filter((s) => s.quantity > 0 && s.lowStockThreshold != null && s.quantity <= s.lowStockThreshold)
+        .map((s) => s.nameAr)
+    })
   }, [])
 
   useEffect(() => {
@@ -59,13 +77,19 @@ export function PosPage(): React.ReactElement {
   const subtotal = orderSubtotal(cart)
   const total = orderTotal(subtotal)
 
-  function addToCart(item: MenuItem): void {
+  function addToCart(item: MenuItem, quantity = 1): void {
     setCart((prev) => {
       const existing = prev.find((l) => l.menuItemId === item.id)
       if (existing) {
         return prev.map((l) =>
           l.menuItemId === item.id
-            ? { ...l, quantity: l.quantity + 1 }
+            ? {
+                ...l,
+                quantity: l.quantity + quantity,
+                weightGrams: item.isWeighted
+                  ? Math.round((l.quantity + quantity) * 1000)
+                  : undefined
+              }
             : l
         )
       }
@@ -76,10 +100,18 @@ export function PosPage(): React.ReactElement {
           menuItemId: item.id,
           nameAr: item.nameAr,
           unitPrice: item.price,
-          quantity: 1
+          quantity,
+          unitLabel: item.isWeighted ? 'كجم' : undefined,
+          weightGrams: item.isWeighted ? Math.round(quantity * 1000) : undefined
         }
       ]
     })
+  }
+
+  function addCustomWeight(item: MenuItem): void {
+    const grams = Number(window.prompt('اكتب الوزن بالجرام', '250'))
+    if (!Number.isFinite(grams) || grams <= 0) return
+    addToCart(item, grams / 1000)
   }
 
   function changeQty(key: string, delta: number): void {
@@ -100,6 +132,7 @@ export function PosPage(): React.ReactElement {
       const order = await completeOrder({
         cashierId: user.id,
         cashierName: user.displayName,
+        cashierCode: user.cashierCode,
         lines: cart,
         orderNoteAr: orderNote || undefined,
         paymentMethod: method
@@ -131,9 +164,33 @@ export function PosPage(): React.ReactElement {
     }
   }
 
+  async function handleCloseShift(): Promise<void> {
+    const shift = await getOpenShiftForCashier(user.id)
+    if (!shift) {
+      setMessage('لا يوجد شيفت مفتوح')
+      return
+    }
+    await closeShift(shift.id, user.id)
+    setMessage('تم تقفيل الشيفت')
+  }
+
   return (
     <div className="pos-layout">
       <section className="pos-menu">
+        {(stockAlerts.out.length > 0 || stockAlerts.low.length > 0) && (
+          <div className="pos-stock-alerts">
+            {stockAlerts.out.length > 0 && (
+              <span className="pos-stock-alerts__item pos-stock-alerts__item--out">
+                منتهي: {stockAlerts.out.slice(0, 4).join('، ')}
+              </span>
+            )}
+            {stockAlerts.low.length > 0 && (
+              <span className="pos-stock-alerts__item">
+                قرب النفاد: {stockAlerts.low.slice(0, 4).join('، ')}
+              </span>
+            )}
+          </div>
+        )}
         <input
           className="pos-search"
           placeholder="بحث في القائمة..."
@@ -161,15 +218,39 @@ export function PosPage(): React.ReactElement {
         </div>
         <div className="pos-items">
           {filteredItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="pos-item-btn"
-              onClick={() => addToCart(item)}
-            >
-              {item.nameAr}
-              <span className="pos-item-btn__price">{item.price.toFixed(2)}</span>
-            </button>
+            <div key={item.id} className="pos-item-wrap">
+              <button
+                type="button"
+                className="pos-item-btn"
+                onClick={() => addToCart(item)}
+              >
+                {item.nameAr}
+                <span className="pos-item-btn__price">
+                  {item.price.toFixed(2)}{item.isWeighted ? ' / كجم' : ''}
+                </span>
+              </button>
+              {item.isWeighted && (
+                <div className="pos-weight-shortcuts">
+                  {WEIGHT_SHORTCUTS.map((w) => (
+                    <button
+                      key={w.label}
+                      type="button"
+                      className="pos-weight-btn"
+                      onClick={() => addToCart(item, w.kg)}
+                    >
+                      {w.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="pos-weight-btn"
+                    onClick={() => addCustomWeight(item)}
+                  >
+                    جم
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       </section>
@@ -186,7 +267,14 @@ export function PosPage(): React.ReactElement {
             <div key={line.key} className="cart-line">
               <div>
                 <div className="cart-line__name">{line.nameAr}</div>
-                <div>{lineTotal(line.unitPrice, line.quantity).toFixed(2)}</div>
+                <div>
+                  {lineTotal(line.unitPrice, line.quantity).toFixed(2)}
+                  {line.unitLabel && (
+                    <span style={{ color: 'var(--color-muted)', marginInlineStart: 6 }}>
+                      ({line.quantity.toFixed(3)} {line.unitLabel})
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="cart-line__controls">
                 <button
@@ -209,6 +297,14 @@ export function PosPage(): React.ReactElement {
           ))}
         </div>
         <div className="pos-cart__footer">
+          <button
+            type="button"
+            className="btn btn--secondary btn--sm"
+            onClick={() => void handleCloseShift()}
+            style={{ width: '100%', marginBottom: 8 }}
+          >
+            تقفيل الشيفت
+          </button>
           <label className="field">
             <span>ملاحظة على الطلب</span>
             <input

@@ -2,6 +2,7 @@ export type InventoryTransactionType =
   | 'purchase'
   | 'sale'
   | 'waste'
+  | 'sale_reversal'
   | 'adjustment'
 
 export interface Ingredient {
@@ -21,8 +22,10 @@ export interface InventoryTransaction {
   /** Signed quantity in base unit (positive = in, negative = out) */
   quantity: number
   unit: string
-  referenceType?: 'order' | 'purchase' | 'manual'
+  referenceType?: 'order' | 'purchase' | 'manual' | 'shift' | 'supplier'
   referenceId?: string
+  shiftId?: string
+  supplierId?: string
   noteAr?: string
   createdBy: string
   createdAt: number
@@ -34,4 +37,24 @@ export interface IngredientStock {
   unit: string
   quantity: number
   lowStockThreshold?: number
+}
+
+export type CashDrawerTransactionType =
+  | 'sale'
+  | 'expense'
+  | 'supplier_payment'
+  | 'purchase_payment'
+  | 'cash_in'
+  | 'cash_out'
+
+export interface CashDrawerTransaction {
+  id: string
+  type: CashDrawerTransactionType
+  amount: number
+  shiftId?: string
+  orderId?: string
+  supplierId?: string
+  noteAr?: string
+  createdBy: string
+  createdAt: number
 }

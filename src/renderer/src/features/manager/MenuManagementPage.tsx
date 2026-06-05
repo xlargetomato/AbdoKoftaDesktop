@@ -31,6 +31,7 @@ type ItemEditState = {
   nameAr: string
   price: string
   categoryId: string
+  isWeighted: boolean
   active: boolean
 }
 
@@ -46,6 +47,7 @@ export function MenuManagementPage(): React.ReactElement {
     categoryId: '',
     nameAr: '',
     price: '',
+    isWeighted: false,
     lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] as Array<{
       ingredientId: string; quantity: string; unit: string
     }>
@@ -110,10 +112,11 @@ export function MenuManagementPage(): React.ReactElement {
         categoryId: itemForm.categoryId,
         nameAr: itemForm.nameAr.trim(),
         price: Number(itemForm.price),
+        isWeighted: itemForm.isWeighted,
         lines,
         sortOrder: items.length
       })
-      setItemForm({ categoryId: itemForm.categoryId, nameAr: '', price: '', lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] })
+      setItemForm({ categoryId: itemForm.categoryId, nameAr: '', price: '', isWeighted: false, lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] })
       setMessage('تم حفظ الصنف')
       await load()
     } catch (err) { setMessage(err instanceof Error ? err.message : 'فشل') }
@@ -125,6 +128,7 @@ export function MenuManagementPage(): React.ReactElement {
       nameAr: editingItem.nameAr.trim(),
       price: Number(editingItem.price),
       categoryId: editingItem.categoryId,
+      isWeighted: editingItem.isWeighted,
       active: editingItem.active
     })
     setEditingItem(null)
@@ -236,7 +240,14 @@ export function MenuManagementPage(): React.ReactElement {
             <span>السعر</span>
             <input type="number" min="0" step="0.01" value={itemForm.price} onChange={(e) => setItemForm((f) => ({ ...f, price: e.target.value }))} required />
           </label>
-          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
+          <label className="field field--checkbox">
+            <input
+              type="checkbox"
+              checked={itemForm.isWeighted}
+              onChange={(e) => setItemForm((f) => ({ ...f, isWeighted: e.target.checked }))}
+            />
+            <span>Weighted item - price and recipe per 1 kg</span>
+          </label>          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
           {itemForm.lines.map((line, idx) => (
             <div key={idx} className="page-toolbar" style={{ gap: 6 }}>
               <select value={line.ingredientId} onChange={(e) => {
@@ -340,7 +351,7 @@ export function MenuManagementPage(): React.ReactElement {
                       ) : (
                         <>
                           <button type="button" className="btn btn--secondary btn--sm"
-                            onClick={() => setEditingItem({ id: item.id, nameAr: item.nameAr, price: String(item.price), categoryId: item.categoryId, active: item.active })}>
+                            onClick={() => setEditingItem({ id: item.id, nameAr: item.nameAr, price: String(item.price), categoryId: item.categoryId, isWeighted: !!item.isWeighted, active: item.active })}>
                             <MdEdit /> تعديل
                           </button>
                           <button type="button" className="btn btn--secondary btn--sm" onClick={() => void openRecipe(item)}>الوصفة</button>

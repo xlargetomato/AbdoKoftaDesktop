@@ -45,6 +45,12 @@ export const collections = {
   orders: () => collection(getDb(), COLLECTIONS.orders),
   orderItems: () => collection(getDb(), COLLECTIONS.orderItems),
   payments: () => collection(getDb(), COLLECTIONS.payments),
+  shifts: () => collection(getDb(), COLLECTIONS.shifts),
+  cashDrawerTransactions: () =>
+    collection(getDb(), COLLECTIONS.cashDrawerTransactions),
+  suppliers: () => collection(getDb(), COLLECTIONS.suppliers),
+  supplierTransactions: () =>
+    collection(getDb(), COLLECTIONS.supplierTransactions),
   settings: () => collection(getDb(), COLLECTIONS.settings)
 }
 

@@ -5,6 +5,7 @@ export interface AppUser {
   email: string
   username: string
   displayName: string
+  cashierCode?: string
   role: UserRole
   active: boolean
   pinHash?: string        // SHA-256 of the 4-digit PIN, undefined = no PIN set
@@ -15,6 +16,7 @@ export interface AppUser {
 export interface AppUserCreate {
   username: string        // manager types this, email is derived internally
   displayName: string
+  cashierCode?: string
   role: UserRole
   password: string
 }

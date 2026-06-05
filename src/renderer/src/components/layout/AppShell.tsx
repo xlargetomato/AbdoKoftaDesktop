@@ -8,6 +8,7 @@ import { navLinkEnd, MdLogout, type NavItem } from '@renderer/config/navigation'
 import { MdSystemUpdate, MdClose, MdExpandMore, MdExpandLess, MdLock } from 'react-icons/md'
 import { triggerCheckNow, useUpdateState } from '@renderer/components/UpdateNotification'
 import { usePinStore } from '@renderer/features/auth/pin-store'
+import { getUnarchivedShiftCount } from '@renderer/features/shifts/shift-service'
 
 interface AppShellProps {
   nav: NavItem[]
@@ -22,6 +23,7 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   const [currentVersion, setCurrentVersion] = useState<string>('...')
   const [showPopup, setShowPopup] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const [shiftBadge, setShiftBadge] = useState(0)
   const updateState = useUpdateState()
   const pinEnabled = usePinStore((s) => s.pinEnabled)
   const lockApp = usePinStore((s) => s.lock)
@@ -29,6 +31,10 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   useEffect(() => {
     window.electronAPI?.getAppVersion().then(setCurrentVersion).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    void getUnarchivedShiftCount().then(setShiftBadge).catch(() => {})
+  }, [location.pathname])
 
   // Auto-open dropdown if current path matches a child
   useEffect(() => {
@@ -126,6 +132,9 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
                 <span className="app-sidebar__link-row">
                   <Icon className="app-sidebar__link-icon" aria-hidden="true" />
                   <span className="app-sidebar__link-label">{item.label}</span>
+                  {item.to === '/manager/shifts' && shiftBadge > 0 && (
+                    <span className="app-sidebar__badge">{shiftBadge}</span>
+                  )}
                 </span>
                 {item.hint && (
                   <span className="app-sidebar__link-hint">{item.hint}</span>

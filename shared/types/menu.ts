@@ -13,6 +13,7 @@ export interface MenuItem {
   nameAr: string
   descriptionAr?: string
   price: number
+  isWeighted?: boolean
   imageUrl?: string
   active: boolean
   recipeId: string
@@ -31,6 +32,8 @@ export interface Recipe {
   id: string
   menuItemId: string
   nameAr: string
+  basisQuantity?: number
+  basisUnit?: string
   lines: RecipeLine[]
   createdAt: number
   updatedAt: number
