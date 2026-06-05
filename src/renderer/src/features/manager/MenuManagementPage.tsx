@@ -246,7 +246,7 @@ export function MenuManagementPage(): React.ReactElement {
               checked={itemForm.isWeighted}
               onChange={(e) => setItemForm((f) => ({ ...f, isWeighted: e.target.checked }))}
             />
-            <span>Weighted item - price and recipe per 1 kg</span>
+            <span>منتج ميزان - السعر والوصفة لكل 1 كجم</span>
           </label>          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
           {itemForm.lines.map((line, idx) => (
             <div key={idx} className="page-toolbar" style={{ gap: 6 }}>
