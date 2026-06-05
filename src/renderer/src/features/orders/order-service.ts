@@ -5,7 +5,8 @@ import {
   orderBy,
   where,
   writeBatch,
-  getDoc
+  getDoc,
+  deleteField
 } from 'firebase/firestore'
 import type { InventoryTransaction, Order, OrderItem, Payment } from '@shared/types'
 import {
@@ -60,9 +61,13 @@ export async function getSettings(): Promise<AppSettings> {
 export async function updateSettings(
   patch: Partial<Pick<AppSettings, 'restaurantNameAr' | 'currencySymbol' | 'receiptFooterAr' | 'phoneNumber' | 'primaryColor' | 'pinEnabled' | 'autoLockMinutes'>>
 ): Promise<void> {
+  const data: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(patch)) {
+    data[key] = value === undefined ? deleteField() : value
+  }
   await updateDoc(
     doc(collections.settings(), SETTINGS_DOC_ID),
-    { ...patch, updatedAt: Date.now() }
+    { ...data, updatedAt: Date.now() }
   )
 }
 
