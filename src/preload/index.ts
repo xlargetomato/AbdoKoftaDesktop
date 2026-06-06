@@ -13,6 +13,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('app:get-version'),
   restartApp: (): Promise<void> =>
     ipcRenderer.invoke('app:restart'),
+  getLicenseStatus: (): Promise<{
+    valid: boolean
+    reason?: string
+    hwid: string
+    licensePath: string
+    license?: unknown
+  }> => ipcRenderer.invoke('license:get-status'),
+  createActivationRequest: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('license:create-activation-request'),
+  importLicense: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
+    ipcRenderer.invoke('license:import-license'),
+  getLocalStoreStatus: (): Promise<{ ok: boolean; path: string; pendingOutbox: number; error?: string }> =>
+    ipcRenderer.invoke('local-store:get-status'),
 
   // Auto-updater
   updaterCheckNow: (): Promise<void> =>

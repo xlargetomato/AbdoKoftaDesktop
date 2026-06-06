@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from '../App'
+import { LicenseActivationPage } from '@renderer/features/license/LicenseActivationPage'
 
 function showBootstrapError(message: string): void {
   const root = document.getElementById('root')
@@ -10,6 +11,19 @@ function showBootstrapError(message: string): void {
 
 export async function bootstrapApp(): Promise<void> {
   const rootEl = document.getElementById('root')!
+  const root = createRoot(rootEl)
+  const licenseStatus = await window.electronAPI.getLicenseStatus()
+  if (!licenseStatus.valid) {
+    root.render(
+      <StrictMode>
+        <LicenseActivationPage
+          status={licenseStatus}
+          onActivated={() => window.location.reload()}
+        />
+      </StrictMode>
+    )
+    return
+  }
   try {
     const { enableOfflinePersistence } = await import('@renderer/lib/firebase')
     await enableOfflinePersistence()
@@ -20,7 +34,7 @@ export async function bootstrapApp(): Promise<void> {
     showBootstrapError(message)
     return
   }
-  createRoot(rootEl).render(
+  root.render(
     <StrictMode>
       <App />
     </StrictMode>

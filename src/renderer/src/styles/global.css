@@ -1777,6 +1777,57 @@ textarea {
   cursor: pointer;
 }
 
+.license-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--color-bg);
+}
+
+.license-panel {
+  width: min(680px, 100%);
+  padding: 24px;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.license-panel h1 {
+  margin: 0 0 12px;
+  font-size: 1.35rem;
+}
+
+.license-panel__message {
+  margin: 0 0 16px;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+.license-panel__meta {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.license-panel__meta span {
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.license-panel__meta code {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow-wrap: anywhere;
+}
+
+.license-panel__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
 .weighted-pricing-editor {
   display: flex;
   flex-direction: column;

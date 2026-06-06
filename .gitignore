@@ -13,6 +13,10 @@ release
 .env.local
 service-account.json
 **/service-account*.json
+license-private-key.pem
+license-public-key.pem.tmp
+activation_request.dat
+license.dat
 
 # Logs
 *.log

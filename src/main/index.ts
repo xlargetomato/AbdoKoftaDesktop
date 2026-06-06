@@ -60,6 +60,12 @@ function createWindow(): void {
 
 import { deleteAuthUser, resetAuthUserPassword } from './firebase-admin'
 import { initAutoUpdater } from './auto-updater'
+import {
+  createActivationRequestFile,
+  getLicenseStatus,
+  importLicenseFile
+} from './license'
+import { getLocalStoreStatus, initLocalStore } from './local-store'
 
 app.whenReady().then(() => {
   if (!isDev) {
@@ -69,8 +75,13 @@ app.whenReady().then(() => {
   // Init updater in both dev and prod
   // (forceDevUpdateConfig handles the dev case via dev-app-update.yml)
   initAutoUpdater()
+  initLocalStore()
 
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('license:get-status', () => getLicenseStatus())
+  ipcMain.handle('license:create-activation-request', () => createActivationRequestFile())
+  ipcMain.handle('license:import-license', () => importLicenseFile())
+  ipcMain.handle('local-store:get-status', () => getLocalStoreStatus())
 
   ipcMain.handle('app:restart', () => {
     app.relaunch()

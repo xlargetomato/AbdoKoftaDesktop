@@ -8,6 +8,31 @@ export interface ElectronAPI {
   // App version & control
   getAppVersion: () => Promise<string>
   restartApp: () => Promise<void>
+  getLicenseStatus: () => Promise<{
+    valid: boolean
+    reason?: string
+    hwid: string
+    licensePath: string
+    license?: {
+      licenseId: string
+      customerName?: string
+      storeName?: string
+      issuedAt: number
+      expiresAt?: number
+    }
+  }>
+  createActivationRequest: () => Promise<{ ok: boolean; path?: string; error?: string }>
+  importLicense: () => Promise<{
+    ok: boolean
+    status?: { valid: boolean; reason?: string }
+    error?: string
+  }>
+  getLocalStoreStatus: () => Promise<{
+    ok: boolean
+    path: string
+    pendingOutbox: number
+    error?: string
+  }>
 
   // Auto-updater — actions
   updaterCheckNow: () => Promise<void>
