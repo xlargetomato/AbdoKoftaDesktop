@@ -5,10 +5,20 @@ import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { trackWrite } from '../sync/sync-store'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listSuppliers(activeOnly = false): Promise<Supplier[]> {
-  const snap = await getDocs(query(collections.suppliers(), orderBy('nameAr')))
-  const suppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
+  let suppliers: Supplier[]
+  try {
+    const snap = await getDocs(query(collections.suppliers(), orderBy('nameAr')))
+    suppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
+    await cacheDocs(COLLECTIONS.suppliers, suppliers)
+  } catch (e) {
+    suppliers = await getCachedDocs<Supplier>(COLLECTIONS.suppliers)
+    if (!suppliers.length) throw e
+    suppliers = suppliers.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
+  }
   return activeOnly ? suppliers.filter((s) => s.active) : suppliers
 }
 
@@ -33,6 +43,7 @@ export async function createSupplier(data: {
       omitUndefined(supplier as unknown as Record<string, unknown>)
     )
   )
+  await cacheDocs(COLLECTIONS.suppliers, [supplier])
   return supplier
 }
 
@@ -70,16 +81,26 @@ export async function recordSupplierTransaction(params: {
       omitUndefined(tx as unknown as Record<string, unknown>)
     )
   )
+  await cacheDocs(COLLECTIONS.supplierTransactions, [tx])
   return tx
 }
 
 export async function listSupplierTransactions(
   supplierId?: string
 ): Promise<SupplierTransaction[]> {
-  const base = query(collections.supplierTransactions(), orderBy('createdAt', 'desc'))
-  const q = supplierId ? query(base, where('supplierId', '==', supplierId)) : base
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => mapDoc<SupplierTransaction>(d))
+  try {
+    const base = query(collections.supplierTransactions(), orderBy('createdAt', 'desc'))
+    const q = supplierId ? query(base, where('supplierId', '==', supplierId)) : base
+    const snap = await getDocs(q)
+    const transactions = snap.docs.map((d) => mapDoc<SupplierTransaction>(d))
+    await cacheDocs(COLLECTIONS.supplierTransactions, transactions)
+    return transactions
+  } catch (e) {
+    let transactions = await getCachedDocs<SupplierTransaction>(COLLECTIONS.supplierTransactions)
+    if (supplierId) transactions = transactions.filter((tx) => tx.supplierId === supplierId)
+    if (transactions.length) return transactions.sort((a, b) => b.createdAt - a.createdAt)
+    throw e
+  }
 }
 
 export async function getSupplierBalance(supplierId: string): Promise<number> {

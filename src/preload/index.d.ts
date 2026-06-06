@@ -33,6 +33,12 @@ export interface ElectronAPI {
     pendingOutbox: number
     error?: string
   }>
+  cacheDocuments: (
+    collectionName: string,
+    documents: Array<{ id: string; data: unknown }>
+  ) => Promise<{ ok: boolean }>
+  getCachedDocuments: (collectionName: string) => Promise<unknown[]>
+  getCachedDocument: (collectionName: string, documentId: string) => Promise<unknown | null>
 
   // Auto-updater — actions
   updaterCheckNow: () => Promise<void>

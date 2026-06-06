@@ -8,7 +8,7 @@ import {
   getDoc,
   deleteField
 } from 'firebase/firestore'
-import type { CashDrawerTransaction, InventoryTransaction, Order, OrderItem, Payment } from '@shared/types'
+import type { CashDrawerTransaction, InventoryTransaction, MenuItem, Order, OrderItem, Payment } from '@shared/types'
 import {
   recipeDeductionLines,
   mergeDeductionLines
@@ -29,6 +29,8 @@ import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
 import { nextLocalOrderReference } from '@renderer/lib/offline/order-number'
 import { ensureOpenShift } from '../shifts/shift-service'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDoc, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export interface CartLine {
   menuItemId: string
@@ -41,20 +43,24 @@ export interface CartLine {
 }
 
 export async function getSettings(): Promise<AppSettings> {
-  const snap = await getDoc(doc(collections.settings(), SETTINGS_DOC_ID))
-  if (!snap.exists()) {
-    const defaults: AppSettings = {
-      id: SETTINGS_DOC_ID,
-      restaurantNameAr: RESTAURANT_NAME_AR,
-      currencySymbol: 'ج.م',
-      pinEnabled: false,
-      autoLockMinutes: 5,
-      nextOrderNumber: 1,
-      updatedAt: Date.now()
-    }
-    return defaults
+  const defaults: AppSettings = {
+    id: SETTINGS_DOC_ID,
+    restaurantNameAr: RESTAURANT_NAME_AR,
+    currencySymbol: 'ج.م',
+    pinEnabled: false,
+    autoLockMinutes: 5,
+    nextOrderNumber: 1,
+    updatedAt: Date.now()
   }
-  return mapDoc<AppSettings>(snap as never)
+  try {
+    const snap = await getDoc(doc(collections.settings(), SETTINGS_DOC_ID))
+    if (!snap.exists()) return defaults
+    const settings = mapDoc<AppSettings>(snap as never)
+    await cacheDocs(COLLECTIONS.settings, [settings])
+    return settings
+  } catch {
+    return (await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)) ?? defaults
+  }
 }
 
 export async function updateSettings(
@@ -182,6 +188,12 @@ async function _completeOrder(params: {
   )
 
   await batch.commit()
+  await Promise.all([
+    cacheDocs(COLLECTIONS.orders, [order]),
+    cacheDocs(COLLECTIONS.orderItems, orderItems),
+    cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions),
+    cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
+  ])
   return order
 }
 
@@ -199,11 +211,16 @@ async function inventoryTransactionsForOrder(
   }> = []
 
   for (const item of items) {
-    const menuSnap = await getDoc(
-      doc(collections.menuItems(), item.menuItemId)
-    )
-    if (!menuSnap.exists()) continue
-    const menuItem = menuSnap.data() as { recipeId: string }
+    let menuItem: Pick<MenuItem, 'recipeId'> | null = null
+    try {
+      const menuSnap = await getDoc(
+        doc(collections.menuItems(), item.menuItemId)
+      )
+      if (menuSnap.exists()) menuItem = menuSnap.data() as Pick<MenuItem, 'recipeId'>
+    } catch {
+      menuItem = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, item.menuItemId)
+    }
+    if (!menuItem?.recipeId) continue
     const recipe = await getRecipe(menuItem.recipeId)
     if (!recipe) continue
     allLines.push(...recipeDeductionLines(recipe, item.quantity))
@@ -302,10 +319,18 @@ async function inventoryReversalsForOrder(
 }
 
 export async function listOrders(limit = 50): Promise<Order[]> {
-  const snap = await getDocs(
-    query(collections.orders(), orderBy('createdAt', 'desc'))
-  )
-  return snap.docs.map((d) => mapDoc<Order>(d)).slice(0, limit)
+  try {
+    const snap = await getDocs(
+      query(collections.orders(), orderBy('createdAt', 'desc'))
+    )
+    const orders = snap.docs.map((d) => mapDoc<Order>(d))
+    await cacheDocs(COLLECTIONS.orders, orders)
+    return orders.slice(0, limit)
+  } catch (e) {
+    const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
+    if (orders.length) return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
+    throw e
+  }
 }
 
 export async function archiveOrders(orderIds: string[]): Promise<void> {
@@ -325,10 +350,20 @@ export async function unarchiveOrders(orderIds: string[]): Promise<void> {
 }
 
 export async function getOrderItems(orderId: string): Promise<OrderItem[]> {
-  const q = query(
-    collections.orderItems(),
-    where('orderId', '==', orderId)
-  )
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => mapDoc<OrderItem>(d))
+  try {
+    const q = query(
+      collections.orderItems(),
+      where('orderId', '==', orderId)
+    )
+    const snap = await getDocs(q)
+    const items = snap.docs.map((d) => mapDoc<OrderItem>(d))
+    await cacheDocs(COLLECTIONS.orderItems, items)
+    return items
+  } catch (e) {
+    const items = (await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)).filter(
+      (item) => item.orderId === orderId
+    )
+    if (items.length) return items
+    throw e
+  }
 }

@@ -16,6 +16,17 @@ import type { AppUser, AppUserCreate, UserRole } from '@shared/types'
 import { usernameToEmail } from '@shared/types/user'
 import { collections, doc, auth } from '@renderer/lib/firebase'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDoc, getCachedDocs, isOfflineError } from '@renderer/lib/offline/sqlite-cache'
+
+const OFFLINE_AUTH_KEY = 'abdokofta.offlineAuth.v1'
+
+interface CachedAuthUser {
+  username: string
+  passwordHash: string
+  user: AppUser
+  updatedAt: number
+}
 
 const AUTH_ERRORS: Record<string, string> = {
   'auth/invalid-credential': 'اسم المستخدم أو كلمة المرور غير صحيحة',
@@ -25,6 +36,79 @@ const AUTH_ERRORS: Record<string, string> = {
   'auth/too-many-requests': 'محاولات كثيرة - انتظر قليلا ثم حاول مجددا',
   'auth/network-request-failed': 'تحقق من الاتصال بالإنترنت',
   'auth/email-already-in-use': 'اسم المستخدم مستخدم بالفعل'
+}
+
+function normalizeUsername(username: string): string {
+  return username.toLowerCase().trim()
+}
+
+async function sha256(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function readOfflineAuthUsers(): CachedAuthUser[] {
+  try {
+    return JSON.parse(localStorage.getItem(OFFLINE_AUTH_KEY) ?? '[]') as CachedAuthUser[]
+  } catch {
+    return []
+  }
+}
+
+function writeOfflineAuthUsers(users: CachedAuthUser[]): void {
+  localStorage.setItem(OFFLINE_AUTH_KEY, JSON.stringify(users))
+}
+
+async function cacheOfflineLogin(user: AppUser, password: string): Promise<void> {
+  const username = normalizeUsername(user.username)
+  const passwordHash = await sha256(`${username}:${password}`)
+  const users = readOfflineAuthUsers().filter((entry) => entry.username !== username)
+  users.push({ username, passwordHash, user, updatedAt: Date.now() })
+  writeOfflineAuthUsers(users)
+  await cacheDocs(COLLECTIONS.users, [user])
+}
+
+async function tryOfflineLogin(usernameInput: string, password: string): Promise<AppUser | null> {
+  const username = normalizeUsername(usernameInput)
+  const passwordHash = await sha256(`${username}:${password}`)
+  const cached = readOfflineAuthUsers().find(
+    (entry) => entry.username === username && entry.passwordHash === passwordHash
+  )
+  if (!cached?.user.active) return null
+  return cached.user
+}
+
+export function hasOfflineAuthUsers(): boolean {
+  return readOfflineAuthUsers().length > 0
+}
+
+export async function createFirstOfflineManager(params: {
+  username: string
+  password: string
+  displayName?: string
+}): Promise<AppUser> {
+  if (hasOfflineAuthUsers()) {
+    throw new Error('يوجد حساب محلي بالفعل')
+  }
+  const username = normalizeUsername(params.username)
+  if (!username) throw new Error('اسم المستخدم مطلوب')
+  if (params.password.length < 6) throw new Error('كلمة المرور يجب أن تكون 6 أحرف على الأقل')
+  const now = Date.now()
+  const user: AppUser = {
+    id: `local_${username}`,
+    email: usernameToEmail(username),
+    username,
+    displayName: params.displayName?.trim() || username,
+    role: 'manager',
+    active: true,
+    createdAt: now,
+    updatedAt: now
+  }
+  await cacheOfflineLogin(user, params.password)
+  return user
 }
 
 function toAuthError(err: unknown): Error {
@@ -45,7 +129,7 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
       return null
     }
     const data = snap.data()
-    return {
+    const user = {
       id: snap.id,
       email: data.email as string,
       username: (data.username as string) || (data.email as string).split('@')[0],
@@ -57,7 +141,11 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
       createdAt: data.createdAt as number,
       updatedAt: data.updatedAt as number
     }
+    await cacheDocs(COLLECTIONS.users, [user])
+    return user
   } catch (e) {
+    const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, uid)
+    if (cached) return cached
     console.error('[auth] fetchAppUser failed:', e)
     throw toAuthError(e)
   }
@@ -73,6 +161,10 @@ export async function loginAndLoadUser(
   try {
     cred = await signInWithEmailAndPassword(auth, email, password)
   } catch (e) {
+    if (isOfflineError(e)) {
+      const offlineUser = await tryOfflineLogin(username, password)
+      if (offlineUser) return offlineUser
+    }
     throw toAuthError(e)
   }
   const appUser = await fetchAppUser(cred.user.uid)
@@ -80,6 +172,7 @@ export async function loginAndLoadUser(
     await signOut(auth)
     throw new Error('الحساب غير موجود في قاعدة البيانات - شغّل: npm run seed')
   }
+  await cacheOfflineLogin(appUser, password)
   return appUser
 }
 
@@ -127,9 +220,17 @@ async function assertCashierCodeAvailable(
 }
 
 export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
-  const q = query(collections.users(), where('role', '==', role))
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => mapDoc<AppUser>(d))
+  try {
+    const q = query(collections.users(), where('role', '==', role))
+    const snap = await getDocs(q)
+    const users = snap.docs.map((d) => mapDoc<AppUser>(d))
+    await cacheDocs(COLLECTIONS.users, users)
+    return users
+  } catch (e) {
+    const users = await getCachedDocs<AppUser>(COLLECTIONS.users)
+    if (users.length) return users.filter((user) => user.role === role)
+    throw e
+  }
 }
 
 export async function updateUserActive(userId: string, active: boolean): Promise<void> {

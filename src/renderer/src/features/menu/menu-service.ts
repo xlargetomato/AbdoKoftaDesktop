@@ -13,12 +13,22 @@ import { collections, doc } from '@renderer/lib/firebase'
 import { mapDoc, stripId } from '@renderer/lib/utils/firestore-mapper'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDoc, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listCategories(): Promise<MenuCategory[]> {
-  const snap = await getDocs(
-    query(collections.menuCategories(), orderBy('sortOrder'))
-  )
-  return snap.docs.map((d) => mapDoc<MenuCategory>(d))
+  try {
+    const snap = await getDocs(
+      query(collections.menuCategories(), orderBy('sortOrder'))
+    )
+    const categories = snap.docs.map((d) => mapDoc<MenuCategory>(d))
+    await cacheDocs(COLLECTIONS.menuCategories, categories)
+    return categories
+  } catch (e) {
+    const categories = await getCachedDocs<MenuCategory>(COLLECTIONS.menuCategories)
+    if (categories.length) return categories.sort((a, b) => a.sortOrder - b.sortOrder)
+    throw e
+  }
 }
 
 export async function createCategory(
@@ -39,6 +49,7 @@ export async function createCategory(
     doc(collections.menuCategories(), id),
     omitUndefined(stripId(cat) as Record<string, unknown>)
   )
+  await cacheDocs(COLLECTIONS.menuCategories, [cat])
   return cat
 }
 
@@ -81,8 +92,15 @@ export async function deleteCategory(id: string): Promise<void> {
 }
 
 export async function listMenuItems(activeOnly = false): Promise<MenuItem[]> {
-  const snap = await getDocs(collections.menuItems())
-  let items = snap.docs.map((d) => mapDoc<MenuItem>(d))
+  let items: MenuItem[]
+  try {
+    const snap = await getDocs(collections.menuItems())
+    items = snap.docs.map((d) => mapDoc<MenuItem>(d))
+    await cacheDocs(COLLECTIONS.menuItems, items)
+  } catch (e) {
+    items = await getCachedDocs<MenuItem>(COLLECTIONS.menuItems)
+    if (!items.length) throw e
+  }
   if (activeOnly) items = items.filter((i) => i.active)
   // Sort by sortOrder, fallback to name for items without it
   return items.sort((a, b) => {
@@ -116,19 +134,36 @@ export async function reorderCategories(
 export async function getRecipeByMenuItem(
   menuItemId: string
 ): Promise<Recipe | null> {
-  const q = query(
-    collections.recipes(),
-    where('menuItemId', '==', menuItemId)
-  )
-  const snap = await getDocs(q)
-  if (snap.empty) return null
-  return mapDoc<Recipe>(snap.docs[0]!)
+  try {
+    const q = query(
+      collections.recipes(),
+      where('menuItemId', '==', menuItemId)
+    )
+    const snap = await getDocs(q)
+    if (snap.empty) return null
+    const recipe = mapDoc<Recipe>(snap.docs[0]!)
+    await cacheDocs(COLLECTIONS.recipes, [recipe])
+    return recipe
+  } catch (e) {
+    const recipes = await getCachedDocs<Recipe>(COLLECTIONS.recipes)
+    const recipe = recipes.find((r) => r.menuItemId === menuItemId)
+    if (recipe) return recipe
+    throw e
+  }
 }
 
 export async function getRecipe(recipeId: string): Promise<Recipe | null> {
-  const snap = await getDoc(doc(collections.recipes(), recipeId))
-  if (!snap.exists()) return null
-  return mapDoc<Recipe>(snap as never)
+  try {
+    const snap = await getDoc(doc(collections.recipes(), recipeId))
+    if (!snap.exists()) return null
+    const recipe = mapDoc<Recipe>(snap as never)
+    await cacheDocs(COLLECTIONS.recipes, [recipe])
+    return recipe
+  } catch (e) {
+    const recipe = await getCachedDoc<Recipe>(COLLECTIONS.recipes, recipeId)
+    if (recipe) return recipe
+    throw e
+  }
 }
 
 export async function createMenuItemWithRecipe(params: {
@@ -183,6 +218,10 @@ export async function createMenuItemWithRecipe(params: {
     doc(collections.menuItems(), itemId),
     omitUndefined(stripId(item) as Record<string, unknown>)
   )
+  await Promise.all([
+    cacheDocs(COLLECTIONS.menuItems, [item]),
+    cacheDocs(COLLECTIONS.recipes, [recipe])
+  ])
   return { item, recipe }
 }
 

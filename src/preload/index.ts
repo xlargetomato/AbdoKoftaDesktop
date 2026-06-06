@@ -26,6 +26,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('license:import-license'),
   getLocalStoreStatus: (): Promise<{ ok: boolean; path: string; pendingOutbox: number; error?: string }> =>
     ipcRenderer.invoke('local-store:get-status'),
+  cacheDocuments: (
+    collectionName: string,
+    documents: Array<{ id: string; data: unknown }>
+  ): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('local-cache:set-documents', collectionName, documents),
+  getCachedDocuments: (collectionName: string): Promise<unknown[]> =>
+    ipcRenderer.invoke('local-cache:get-documents', collectionName),
+  getCachedDocument: (collectionName: string, documentId: string): Promise<unknown | null> =>
+    ipcRenderer.invoke('local-cache:get-document', collectionName, documentId),
 
   // Auto-updater
   updaterCheckNow: (): Promise<void> =>

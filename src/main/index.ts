@@ -65,7 +65,13 @@ import {
   getLicenseStatus,
   importLicenseFile
 } from './license'
-import { getLocalStoreStatus, initLocalStore } from './local-store'
+import {
+  cacheDocuments,
+  getLocalStoreStatus,
+  initLocalStore,
+  readCachedDocument,
+  readCachedDocuments
+} from './local-store'
 
 app.whenReady().then(() => {
   if (!isDev) {
@@ -82,6 +88,16 @@ app.whenReady().then(() => {
   ipcMain.handle('license:create-activation-request', () => createActivationRequestFile())
   ipcMain.handle('license:import-license', () => importLicenseFile())
   ipcMain.handle('local-store:get-status', () => getLocalStoreStatus())
+  ipcMain.handle('local-cache:set-documents', (_, collectionName: string, documents: Array<{ id: string; data: unknown }>) => {
+    cacheDocuments(collectionName, documents)
+    return { ok: true as const }
+  })
+  ipcMain.handle('local-cache:get-documents', (_, collectionName: string) =>
+    readCachedDocuments(collectionName)
+  )
+  ipcMain.handle('local-cache:get-document', (_, collectionName: string, documentId: string) =>
+    readCachedDocument(collectionName, documentId)
+  )
 
   ipcMain.handle('app:restart', () => {
     app.relaunch()

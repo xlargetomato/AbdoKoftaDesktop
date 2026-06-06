@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import { PasswordInput } from '@renderer/components/PasswordInput'
-import { loginAndLoadUser } from './auth-service'
+import { createFirstOfflineManager, hasOfflineAuthUsers, loginAndLoadUser } from './auth-service'
 import { useAuthStore } from './auth-store'
 import type { AppUser } from '@shared/types'
 
@@ -15,9 +15,14 @@ export function LoginPage(): React.ReactElement {
   const setUser = useAuthStore((s) => s.setUser)
   const navigate = useNavigate()
   const [username, setUsername] = useState('manager')
-  const [password, setPassword] = useState('Manager123!')
+  const [password, setPassword] = useState(() =>
+    !hasOfflineAuthUsers() && !navigator.onLine ? '' : 'Manager123!'
+  )
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [localSetupMode, setLocalSetupMode] = useState(
+    () => !hasOfflineAuthUsers() && !navigator.onLine
+  )
 
   if (user) {
     return <Navigate to={homeFor(user)} replace />
@@ -28,7 +33,13 @@ export function LoginPage(): React.ReactElement {
     setError('')
     setLoading(true)
     try {
-      const appUser = await loginAndLoadUser(username.trim(), password)
+      const appUser = localSetupMode
+        ? await createFirstOfflineManager({
+            username: username.trim(),
+            password,
+            displayName: username.trim()
+          })
+        : await loginAndLoadUser(username.trim(), password)
       setUser(appUser)
       navigate(homeFor(appUser), { replace: true })
     } catch (err) {
@@ -44,6 +55,9 @@ export function LoginPage(): React.ReactElement {
       <div className="login-card">
         <div className="login-card__bar" />
         <h1 className="login-card__title">{RESTAURANT_NAME_AR}</h1>
+        {localSetupMode && (
+          <p className="muted">إنشاء أول حساب مدير محلي للعمل بدون إنترنت من أول تشغيل.</p>
+        )}
         <form onSubmit={(e) => void handleSubmit(e)} className="login-form">
           <label className="field">
             <span>اسم المستخدم</span>
@@ -63,8 +77,36 @@ export function LoginPage(): React.ReactElement {
           </label>
           {error && <p className="form-error">{error}</p>}
           <button type="submit" className="btn btn--primary btn--lg" disabled={loading}>
-            {loading ? 'جاري الدخول...' : 'تسجيل الدخول'}
+            {loading
+              ? 'جاري التنفيذ...'
+              : localSetupMode
+                ? 'إنشاء المدير المحلي'
+                : 'تسجيل الدخول'}
           </button>
+          {!localSetupMode && !hasOfflineAuthUsers() && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--lg"
+              onClick={() => {
+                setError('')
+                setLocalSetupMode(true)
+              }}
+            >
+              إنشاء أول مدير محلي
+            </button>
+          )}
+          {localSetupMode && hasOfflineAuthUsers() && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--lg"
+              onClick={() => {
+                setError('')
+                setLocalSetupMode(false)
+              }}
+            >
+              الرجوع لتسجيل الدخول
+            </button>
+          )}
         </form>
       </div>
     </div>

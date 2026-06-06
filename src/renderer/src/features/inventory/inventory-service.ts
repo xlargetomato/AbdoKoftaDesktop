@@ -19,12 +19,22 @@ import { mapDoc, stripId } from '@renderer/lib/utils/firestore-mapper'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { trackWrite } from '../sync/sync-store'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listIngredients(): Promise<Ingredient[]> {
-  const snap = await getDocs(
-    query(collections.ingredients(), orderBy('nameAr'))
-  )
-  return snap.docs.map((d) => mapDoc<Ingredient>(d))
+  try {
+    const snap = await getDocs(
+      query(collections.ingredients(), orderBy('nameAr'))
+    )
+    const ingredients = snap.docs.map((d) => mapDoc<Ingredient>(d))
+    await cacheDocs(COLLECTIONS.ingredients, ingredients)
+    return ingredients
+  } catch (e) {
+    const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
+    if (ingredients.length) return ingredients.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
+    throw e
+  }
 }
 
 export async function createIngredient(
@@ -42,6 +52,7 @@ export async function createIngredient(
     doc(collections.ingredients(), id),
     omitUndefined(stripId(ingredient) as Record<string, unknown>)
   )
+  await cacheDocs(COLLECTIONS.ingredients, [ingredient])
   return ingredient
 }
 
@@ -103,21 +114,31 @@ export async function recordInventoryTransaction(params: {
       omitUndefined(tx as unknown as Record<string, unknown>)
     )
   )
+  await cacheDocs(COLLECTIONS.inventoryTransactions, [tx])
   return tx
 }
 
 export async function listInventoryTransactions(
   ingredientId?: string
 ): Promise<InventoryTransaction[]> {
-  const base = query(
-    collections.inventoryTransactions(),
-    orderBy('createdAt', 'desc')
-  )
-  const q = ingredientId
-    ? query(base, where('ingredientId', '==', ingredientId))
-    : base
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => mapDoc<InventoryTransaction>(d))
+  try {
+    const base = query(
+      collections.inventoryTransactions(),
+      orderBy('createdAt', 'desc')
+    )
+    const q = ingredientId
+      ? query(base, where('ingredientId', '==', ingredientId))
+      : base
+    const snap = await getDocs(q)
+    const transactions = snap.docs.map((d) => mapDoc<InventoryTransaction>(d))
+    await cacheDocs(COLLECTIONS.inventoryTransactions, transactions)
+    return transactions
+  } catch (e) {
+    let transactions = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
+    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
+    if (transactions.length) return transactions.sort((a, b) => b.createdAt - a.createdAt)
+    throw e
+  }
 }
 
 export async function getIngredientStocks(): Promise<IngredientStock[]> {

@@ -5,6 +5,8 @@ import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { trackWrite } from '../sync/sync-store'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export async function recordCashDrawerTransaction(params: {
   type: CashDrawerTransactionType
@@ -32,14 +34,24 @@ export async function recordCashDrawerTransaction(params: {
       omitUndefined(tx as unknown as Record<string, unknown>)
     )
   )
+  await cacheDocs(COLLECTIONS.cashDrawerTransactions, [tx])
   return tx
 }
 
 export async function listCashDrawerTransactions(
   shiftId?: string
 ): Promise<CashDrawerTransaction[]> {
-  const base = query(collections.cashDrawerTransactions(), orderBy('createdAt', 'desc'))
-  const q = shiftId ? query(base, where('shiftId', '==', shiftId)) : base
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => mapDoc<CashDrawerTransaction>(d))
+  try {
+    const base = query(collections.cashDrawerTransactions(), orderBy('createdAt', 'desc'))
+    const q = shiftId ? query(base, where('shiftId', '==', shiftId)) : base
+    const snap = await getDocs(q)
+    const transactions = snap.docs.map((d) => mapDoc<CashDrawerTransaction>(d))
+    await cacheDocs(COLLECTIONS.cashDrawerTransactions, transactions)
+    return transactions
+  } catch (e) {
+    let transactions = await getCachedDocs<CashDrawerTransaction>(COLLECTIONS.cashDrawerTransactions)
+    if (shiftId) transactions = transactions.filter((tx) => tx.shiftId === shiftId)
+    if (transactions.length) return transactions.sort((a, b) => b.createdAt - a.createdAt)
+    throw e
+  }
 }

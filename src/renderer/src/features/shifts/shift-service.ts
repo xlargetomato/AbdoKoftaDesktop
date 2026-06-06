@@ -8,6 +8,8 @@ import { listOrders } from '../orders/order-service'
 import { listInventoryTransactions } from '../inventory/inventory-service'
 import { listCashDrawerTransactions } from '../cash/cash-service'
 import { trackWrite } from '../sync/sync-store'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 
 export interface ShiftSummary {
   shift: Shift
@@ -22,22 +24,49 @@ export interface ShiftSummary {
   cashTransactions: CashDrawerTransaction[]
 }
 
+async function patchCachedShifts(
+  shiftIds: string[],
+  patch: Partial<Shift>
+): Promise<void> {
+  const cached = await getCachedDocs<Shift>(COLLECTIONS.shifts)
+  const updates = cached
+    .filter((shift) => shiftIds.includes(shift.id))
+    .map((shift) => ({ ...shift, ...patch, updatedAt: Date.now() }))
+  if (updates.length) await cacheDocs(COLLECTIONS.shifts, updates)
+}
+
 export async function listShifts(includeArchived = false): Promise<Shift[]> {
-  const snap = await getDocs(query(collections.shifts(), orderBy('openedAt', 'desc')))
-  const shifts = snap.docs.map((d) => mapDoc<Shift>(d))
+  let shifts: Shift[]
+  try {
+    const snap = await getDocs(query(collections.shifts(), orderBy('openedAt', 'desc')))
+    shifts = snap.docs.map((d) => mapDoc<Shift>(d))
+    await cacheDocs(COLLECTIONS.shifts, shifts)
+  } catch (e) {
+    shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
+    if (!shifts.length) throw e
+    shifts = shifts.sort((a, b) => b.openedAt - a.openedAt)
+  }
   return includeArchived ? shifts : shifts.filter((s) => !s.archived)
 }
 
 export async function getOpenShiftForCashier(cashierId: string): Promise<Shift | null> {
-  const snap = await getDocs(
-    query(
-      collections.shifts(),
-      where('cashierId', '==', cashierId),
-      where('status', '==', 'open')
+  try {
+    const snap = await getDocs(
+      query(
+        collections.shifts(),
+        where('cashierId', '==', cashierId),
+        where('status', '==', 'open')
+      )
     )
-  )
-  const first = snap.docs[0]
-  return first ? mapDoc<Shift>(first) : null
+    const first = snap.docs[0]
+    if (!first) return null
+    const shift = mapDoc<Shift>(first)
+    await cacheDocs(COLLECTIONS.shifts, [shift])
+    return shift
+  } catch {
+    const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
+    return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
+  }
 }
 
 export async function ensureOpenShift(params: {
@@ -66,38 +95,50 @@ export async function ensureOpenShift(params: {
       omitUndefined(shift as unknown as Record<string, unknown>)
     )
   )
+  await cacheDocs(COLLECTIONS.shifts, [shift])
   return shift
 }
 
 export async function closeShift(shiftId: string, closedBy: string): Promise<void> {
+  const now = Date.now()
   await updateDoc(doc(collections.shifts(), shiftId), {
     status: 'closed',
-    closedAt: Date.now(),
+    closedAt: now,
     closedBy,
-    updatedAt: Date.now()
+    updatedAt: now
+  })
+  await patchCachedShifts([shiftId], {
+    status: 'closed',
+    closedAt: now,
+    closedBy,
+    updatedAt: now
   })
 }
 
 export async function archiveShifts(shiftIds: string[]): Promise<void> {
+  const now = Date.now()
   await Promise.all(
     shiftIds.map((id) =>
       updateDoc(doc(collections.shifts(), id), {
         archived: true,
-        updatedAt: Date.now()
+        updatedAt: now
       })
     )
   )
+  await patchCachedShifts(shiftIds, { archived: true, updatedAt: now })
 }
 
 export async function unarchiveShifts(shiftIds: string[]): Promise<void> {
+  const now = Date.now()
   await Promise.all(
     shiftIds.map((id) =>
       updateDoc(doc(collections.shifts(), id), {
         archived: false,
-        updatedAt: Date.now()
+        updatedAt: now
       })
     )
   )
+  await patchCachedShifts(shiftIds, { archived: false, updatedAt: now })
 }
 
 export async function getUnarchivedShiftCount(): Promise<number> {

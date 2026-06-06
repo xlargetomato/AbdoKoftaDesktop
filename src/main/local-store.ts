@@ -54,6 +54,14 @@ function openDatabase(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_created
       ON sync_outbox(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS cached_documents (
+      collection_name TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (collection_name, document_id)
+    );
   `)
   return db
 }
@@ -77,4 +85,42 @@ export function initLocalStore(): LocalStoreStatus {
 
 export function getLocalStoreStatus(): LocalStoreStatus {
   return initLocalStore()
+}
+
+export function cacheDocuments(
+  collectionName: string,
+  documents: Array<{ id: string; data: unknown }>
+): void {
+  const database = openDatabase()
+  const stmt = database.prepare(`
+    INSERT INTO cached_documents (collection_name, document_id, payload_json, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(collection_name, document_id)
+    DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+  `)
+  const now = Date.now()
+  for (const document of documents) {
+    stmt.run(collectionName, document.id, JSON.stringify(document.data), now)
+  }
+}
+
+export function readCachedDocuments(collectionName: string): unknown[] {
+  const database = openDatabase()
+  const rows = database.prepare(`
+    SELECT payload_json
+    FROM cached_documents
+    WHERE collection_name = ?
+    ORDER BY updated_at DESC
+  `).all(collectionName) as Array<{ payload_json: string }>
+  return rows.map((row) => JSON.parse(row.payload_json) as unknown)
+}
+
+export function readCachedDocument(collectionName: string, documentId: string): unknown | null {
+  const database = openDatabase()
+  const row = database.prepare(`
+    SELECT payload_json
+    FROM cached_documents
+    WHERE collection_name = ? AND document_id = ?
+  `).get(collectionName, documentId) as { payload_json: string } | undefined
+  return row ? JSON.parse(row.payload_json) as unknown : null
 }
