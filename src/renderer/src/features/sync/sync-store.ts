@@ -21,11 +21,13 @@ function writeDurablePending(pending: boolean): void {
 }
 
 interface SyncState {
-  networkOnline: boolean
+  browserOnline: boolean
+  backendOnline: boolean
   firestorePending: boolean
   status: SyncStatus
   // Called by useSyncListener
-  setNetworkOnline: (online: boolean) => void
+  setBrowserOnline: (online: boolean) => void
+  setBackendOnline: (online: boolean) => void
   setFirestorePending: (pending: boolean) => void
   // Called by write operations (order-service, inventory-service, etc.)
   // to show yellow only when real writes are in-flight
@@ -35,70 +37,92 @@ interface SyncState {
 }
 
 function deriveStatus(
-  networkOnline: boolean,
+  browserOnline: boolean,
+  backendOnline: boolean,
   firestorePending: boolean
 ): SyncStatus {
-  if (!networkOnline) return 'offline'
+  if (!browserOnline || !backendOnline) return 'offline'
   if (firestorePending) return 'syncing'
-  return 'synced'
+  return 'online'
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
-  networkOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  browserOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  backendOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   firestorePending: readDurablePending(),
   pendingWrites: 0,
   status: deriveStatus(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
     readDurablePending()
   ),
 
-  setNetworkOnline: (online) => {
-    const { firestorePending } = get()
-    set({ networkOnline: online, status: deriveStatus(online, firestorePending) })
+  setBrowserOnline: (online) => {
+    const { backendOnline, firestorePending } = get()
+    set({
+      browserOnline: online,
+      status: deriveStatus(online, backendOnline, firestorePending)
+    })
+  },
+
+  setBackendOnline: (online) => {
+    const { browserOnline, firestorePending } = get()
+    set({
+      backendOnline: online,
+      status: deriveStatus(browserOnline, online, firestorePending)
+    })
   },
 
   setFirestorePending: (pending) => {
-    const { networkOnline, pendingWrites } = get()
+    const { browserOnline, backendOnline, pendingWrites } = get()
     // Don't clear pending if there are still in-flight writes
     const effectivePending = pending || pendingWrites > 0
     writeDurablePending(effectivePending)
     set({
       firestorePending: effectivePending,
-      status: deriveStatus(networkOnline, effectivePending)
+      status: deriveStatus(browserOnline, backendOnline, effectivePending)
     })
   },
 
   markWriteStart: () => {
-    const { networkOnline } = get()
+    const { browserOnline, backendOnline } = get()
     const pendingWrites = get().pendingWrites + 1
     writeDurablePending(true)
     set({
       pendingWrites,
       firestorePending: true,
-      status: deriveStatus(networkOnline, true)
+      status: deriveStatus(browserOnline, backendOnline, true)
     })
   },
 
   markWriteDone: () => {
-    const { networkOnline } = get()
+    const { browserOnline, backendOnline } = get()
     const pendingWrites = Math.max(0, get().pendingWrites - 1)
-    const firestorePending = pendingWrites > 0 || (!networkOnline && readDurablePending())
+    const online = browserOnline && backendOnline
+    const firestorePending = pendingWrites > 0 || (!online && readDurablePending())
     if (!firestorePending) writeDurablePending(false)
     set({
       pendingWrites,
       firestorePending,
-      status: deriveStatus(networkOnline, firestorePending)
+      status: deriveStatus(browserOnline, backendOnline, firestorePending)
     })
   }
 }))
 
+export function isAppOffline(): boolean {
+  return useSyncStore.getState().status === 'offline'
+}
+
 /** Helper to wrap any async Firestore write with sync tracking */
 export async function trackWrite<T>(fn: () => Promise<T>): Promise<T> {
+  if (isAppOffline()) {
+    throw new Error('لا يمكن استخدام Firestore أثناء وضع عدم الاتصال')
+  }
   const store = useSyncStore.getState()
   store.markWriteStart()
   try {
     const result = await fn()
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
+    if (!isAppOffline()) {
       void waitForPendingWrites(getDb()).finally(() => {
         useSyncStore.getState().markWriteDone()
       })
@@ -114,7 +138,7 @@ export async function trackWrite<T>(fn: () => Promise<T>): Promise<T> {
 
 export function flushPendingWrites(): void {
   const store = useSyncStore.getState()
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return
+  if (isAppOffline()) return
   store.setFirestorePending(true)
   void waitForPendingWrites(getDb())
     .catch((e) => {

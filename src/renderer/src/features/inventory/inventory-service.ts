@@ -20,9 +20,14 @@ import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listIngredients(): Promise<Ingredient[]> {
+  if (isAppOffline()) {
+    return (await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)).sort((a, b) =>
+      a.nameAr.localeCompare(b.nameAr, 'ar')
+    )
+  }
   try {
     const snap = await getDocs(
       query(collections.ingredients(), orderBy('nameAr'))
@@ -48,6 +53,10 @@ export async function createIngredient(
     createdAt: now,
     updatedAt: now
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.ingredients, [ingredient])
+    return ingredient
+  }
   await setDoc(
     doc(collections.ingredients(), id),
     omitUndefined(stripId(ingredient) as Record<string, unknown>)
@@ -60,6 +69,12 @@ export async function updateIngredient(
   id: string,
   patch: Partial<Pick<Ingredient, 'nameAr' | 'unit' | 'lowStockThreshold' | 'active'>>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
+    const cached = ingredients.find((ingredient) => ingredient.id === id)
+    if (cached) await cacheDocs(COLLECTIONS.ingredients, [{ ...cached, ...patch, updatedAt: Date.now() }])
+    return
+  }
   await updateDoc(
     doc(collections.ingredients(), id),
     omitUndefined({ ...patch, updatedAt: Date.now() })
@@ -75,6 +90,7 @@ async function isIngredientUsedInRecipes(ingredientId: string): Promise<boolean>
 }
 
 export async function deleteIngredient(id: string): Promise<void> {
+  if (isAppOffline()) throw new Error('لا يمكن الحذف أثناء عدم الاتصال')
   if (await isIngredientUsedInRecipes(id)) {
     throw new Error('لا يمكن الحذف — المكوّن مستخدم في وصفة. احذف الصنف من القائمة أولاً.')
   }
@@ -108,6 +124,10 @@ export async function recordInventoryTransaction(params: {
     createdBy: params.createdBy,
     createdAt: Date.now()
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.inventoryTransactions, [tx])
+    return tx
+  }
   await trackWrite(() =>
     setDoc(
       doc(collections.inventoryTransactions(), tx.id),
@@ -121,6 +141,11 @@ export async function recordInventoryTransaction(params: {
 export async function listInventoryTransactions(
   ingredientId?: string
 ): Promise<InventoryTransaction[]> {
+  if (isAppOffline()) {
+    let transactions = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
+    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
+    return transactions.sort((a, b) => b.createdAt - a.createdAt)
+  }
   try {
     const base = query(
       collections.inventoryTransactions(),

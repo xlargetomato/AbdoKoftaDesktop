@@ -6,18 +6,24 @@ import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listSuppliers(activeOnly = false): Promise<Supplier[]> {
   let suppliers: Supplier[]
-  try {
-    const snap = await getDocs(query(collections.suppliers(), orderBy('nameAr')))
-    suppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
-    await cacheDocs(COLLECTIONS.suppliers, suppliers)
-  } catch (e) {
-    suppliers = await getCachedDocs<Supplier>(COLLECTIONS.suppliers)
-    if (!suppliers.length) throw e
-    suppliers = suppliers.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
+  if (isAppOffline()) {
+    suppliers = (await getCachedDocs<Supplier>(COLLECTIONS.suppliers)).sort((a, b) =>
+      a.nameAr.localeCompare(b.nameAr, 'ar')
+    )
+  } else {
+    try {
+      const snap = await getDocs(query(collections.suppliers(), orderBy('nameAr')))
+      suppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
+      await cacheDocs(COLLECTIONS.suppliers, suppliers)
+    } catch (e) {
+      suppliers = await getCachedDocs<Supplier>(COLLECTIONS.suppliers)
+      if (!suppliers.length) throw e
+      suppliers = suppliers.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
+    }
   }
   return activeOnly ? suppliers.filter((s) => s.active) : suppliers
 }
@@ -37,6 +43,10 @@ export async function createSupplier(data: {
     createdAt: now,
     updatedAt: now
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.suppliers, [supplier])
+    return supplier
+  }
   await trackWrite(() =>
     setDoc(
       doc(collections.suppliers(), supplier.id),
@@ -51,6 +61,12 @@ export async function updateSupplier(
   id: string,
   patch: Partial<Pick<Supplier, 'nameAr' | 'phone' | 'noteAr' | 'active'>>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const suppliers = await getCachedDocs<Supplier>(COLLECTIONS.suppliers)
+    const cached = suppliers.find((supplier) => supplier.id === id)
+    if (cached) await cacheDocs(COLLECTIONS.suppliers, [{ ...cached, ...patch, updatedAt: Date.now() }])
+    return
+  }
   await updateDoc(doc(collections.suppliers(), id), {
     ...omitUndefined(patch as Record<string, unknown>),
     updatedAt: Date.now()
@@ -75,6 +91,10 @@ export async function recordSupplierTransaction(params: {
     createdBy: params.createdBy,
     createdAt: Date.now()
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.supplierTransactions, [tx])
+    return tx
+  }
   await trackWrite(() =>
     setDoc(
       doc(collections.supplierTransactions(), tx.id),
@@ -88,6 +108,11 @@ export async function recordSupplierTransaction(params: {
 export async function listSupplierTransactions(
   supplierId?: string
 ): Promise<SupplierTransaction[]> {
+  if (isAppOffline()) {
+    let transactions = await getCachedDocs<SupplierTransaction>(COLLECTIONS.supplierTransactions)
+    if (supplierId) transactions = transactions.filter((tx) => tx.supplierId === supplierId)
+    return transactions.sort((a, b) => b.createdAt - a.createdAt)
+  }
   try {
     const base = query(collections.supplierTransactions(), orderBy('createdAt', 'desc'))
     const q = supplierId ? query(base, where('supplierId', '==', supplierId)) : base

@@ -1,3 +1,9 @@
+import { isAppOffline as readAppOffline } from '@renderer/features/sync/sync-store'
+
+export function isAppOffline(): boolean {
+  return readAppOffline()
+}
+
 export async function cacheDocs<T extends { id: string }>(
   collectionName: string,
   docs: T[]
@@ -26,6 +32,6 @@ export function isOfflineError(err: unknown): boolean {
   const code = (err as { code?: string })?.code ?? ''
   const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
   return (
-    typeof navigator !== 'undefined' && !navigator.onLine
+    isAppOffline()
   ) || code.includes('unavailable') || code.includes('network') || message.includes('offline')
 }

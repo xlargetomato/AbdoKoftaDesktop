@@ -17,7 +17,13 @@ import { usernameToEmail } from '@shared/types/user'
 import { collections, doc, auth } from '@renderer/lib/firebase'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDoc, getCachedDocs, isOfflineError } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDoc,
+  getCachedDocs,
+  isAppOffline,
+  isOfflineError
+} from '@renderer/lib/offline/sqlite-cache'
 
 const OFFLINE_AUTH_KEY = 'abdokofta.offlineAuth.v1'
 
@@ -122,6 +128,9 @@ function toAuthError(err: unknown): Error {
 }
 
 export async function fetchAppUser(uid: string): Promise<AppUser | null> {
+  if (isAppOffline()) {
+    return getCachedDoc<AppUser>(COLLECTIONS.users, uid)
+  }
   try {
     const snap = await getDoc(doc(collections.users(), uid))
     if (!snap.exists()) {
@@ -156,6 +165,11 @@ export async function loginAndLoadUser(
   username: string,
   password: string
 ): Promise<AppUser> {
+  if (isAppOffline()) {
+    const offlineUser = await tryOfflineLogin(username, password)
+    if (offlineUser) return offlineUser
+    throw new Error('لا يوجد حساب محلي مطابق للعمل بدون إنترنت')
+  }
   const email = usernameToEmail(username)
   let cred
   try {
@@ -182,6 +196,22 @@ export async function createCashierAccount(
 ): Promise<AppUser> {
   const username = data.username.toLowerCase().trim()
   const email = usernameToEmail(username)
+  if (isAppOffline()) {
+    const now = Date.now()
+    const appUser: AppUser = {
+      id: `local_${username}`,
+      email,
+      username,
+      displayName: data.displayName,
+      cashierCode: data.cashierCode?.toUpperCase(),
+      role: data.role,
+      active: true,
+      createdAt: now,
+      updatedAt: now
+    }
+    await cacheOfflineLogin(appUser, data.password)
+    return appUser
+  }
   if (data.role === 'cashier' && data.cashierCode) {
     await assertCashierCodeAvailable(data.cashierCode)
   }
@@ -220,6 +250,9 @@ async function assertCashierCodeAvailable(
 }
 
 export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
+  if (isAppOffline()) {
+    return (await getCachedDocs<AppUser>(COLLECTIONS.users)).filter((user) => user.role === role)
+  }
   try {
     const q = query(collections.users(), where('role', '==', role))
     const snap = await getDocs(q)
@@ -234,6 +267,11 @@ export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
 }
 
 export async function updateUserActive(userId: string, active: boolean): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+    if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, active, updatedAt: Date.now() }])
+    return
+  }
   await updateDoc(doc(collections.users(), userId), { active, updatedAt: Date.now() })
 }
 
@@ -241,6 +279,11 @@ export async function updateUserProfile(
   userId: string,
   patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash' | 'cashierCode'>>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+    if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, ...patch, updatedAt: Date.now() }])
+    return
+  }
   if (patch.cashierCode) {
     await assertCashierCodeAvailable(patch.cashierCode, userId)
     patch.cashierCode = patch.cashierCode.toUpperCase()
@@ -252,12 +295,13 @@ export async function resetCashierPassword(
   userId: string,
   newPassword: string
 ): Promise<void> {
-  if (!navigator.onLine) throw new Error('لا يمكن تغيير كلمة المرور بدون اتصال')
+  if (isAppOffline()) throw new Error('لا يمكن تغيير كلمة المرور بدون اتصال')
   const result = await window.electronAPI.resetAuthUserPassword(userId, newPassword)
   if (!result.ok) throw new Error(result.error ?? 'فشل تغيير كلمة المرور')
 }
 
 export async function deleteCashierAccount(userId: string): Promise<void> {
+  if (isAppOffline()) throw new Error('لا يمكن حذف حساب أثناء عدم الاتصال')
   const snap = await getDoc(doc(collections.users(), userId))
   if (!snap.exists()) return
   const user = snap.data() as AppUser

@@ -1,55 +1,89 @@
 import { useEffect } from 'react'
 import { onSnapshotsInSync } from 'firebase/firestore'
-import { getDb } from '@renderer/lib/firebase'
+import { firebaseConfig, getDb } from '@renderer/lib/firebase'
 import { flushPendingWrites, useSyncStore } from './sync-store'
 
-/**
- * Wires up network + Firestore sync state.
- *
- * Previous implementation polled waitForPendingWrites() every 3 seconds
- * and optimistically set firestorePending=true before the check — causing
- * a yellow flash on every cycle (and a longer one on startup while Firestore
- * initializes).
- *
- * New approach:
- * - network online/offline → drives networkOnline
- * - onSnapshotsInSync      → fires when all active listeners are caught up
- *                            → clears the pending flag
- * - setFirestorePending(true) is called from the write helpers in the store
- *   (see sync-store.ts markWriteStart/markWriteDone) so yellow only appears
- *   when there are real in-flight writes
- * - On startup we do NOT set pending=true at all — the initial state is
- *   already correct (no pending writes when the app just opened)
- */
+async function probeBackend(): Promise<boolean> {
+  if (!navigator.onLine) return false
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 3500)
+  try {
+    const response = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents?pageSize=1`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal
+      }
+    )
+    return response.ok || response.status === 401 || response.status === 403
+  } catch {
+    return false
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 export function useSyncListener(): void {
-  const setNetworkOnline = useSyncStore((s) => s.setNetworkOnline)
+  const setBrowserOnline = useSyncStore((s) => s.setBrowserOnline)
+  const setBackendOnline = useSyncStore((s) => s.setBackendOnline)
   const setFirestorePending = useSyncStore((s) => s.setFirestorePending)
 
   useEffect(() => {
-    // Network state
+    let disposed = false
+    let unsubSync: (() => void) | null = null
+
+    function stopFirestoreSyncListener(): void {
+      unsubSync?.()
+      unsubSync = null
+    }
+
+    function startFirestoreSyncListener(): void {
+      if (unsubSync) return
+      unsubSync = onSnapshotsInSync(getDb(), () => {
+        if (useSyncStore.getState().status !== 'offline') {
+          setFirestorePending(false)
+        }
+      })
+    }
+
+    async function refreshBackendStatus(): Promise<void> {
+      const online = await probeBackend()
+      if (disposed) return
+      setBackendOnline(online)
+      if (online) {
+        startFirestoreSyncListener()
+        flushPendingWrites()
+      } else {
+        stopFirestoreSyncListener()
+      }
+    }
+
     const onOnline = (): void => {
-      setNetworkOnline(true)
-      flushPendingWrites()
+      setBrowserOnline(true)
+      void refreshBackendStatus()
     }
     const onOffline = (): void => {
-      setNetworkOnline(false)
+      setBrowserOnline(false)
+      setBackendOnline(false)
+      stopFirestoreSyncListener()
     }
+
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
-    // Sync with current state (no flash — doesn't touch firestorePending)
-    setNetworkOnline(navigator.onLine)
-    if (navigator.onLine) flushPendingWrites()
+    setBrowserOnline(navigator.onLine)
+    void refreshBackendStatus()
 
-    // Firestore sync — clears the pending flag once all listeners are caught up
-    const db = getDb()
-    const unsubSync = onSnapshotsInSync(db, () => {
-      if (navigator.onLine) setFirestorePending(false)
-    })
+    const probeTimer = window.setInterval(() => {
+      void refreshBackendStatus()
+    }, 15000)
 
     return () => {
-      unsubSync()
+      disposed = true
+      stopFirestoreSyncListener()
+      window.clearInterval(probeTimer)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
-  }, [setNetworkOnline, setFirestorePending])
+  }, [setBrowserOnline, setBackendOnline, setFirestorePending])
 }

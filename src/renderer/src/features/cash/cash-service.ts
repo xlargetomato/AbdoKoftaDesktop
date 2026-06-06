@@ -6,7 +6,7 @@ import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
 
 export async function recordCashDrawerTransaction(params: {
   type: CashDrawerTransactionType
@@ -28,6 +28,10 @@ export async function recordCashDrawerTransaction(params: {
     createdBy: params.createdBy,
     createdAt: Date.now()
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.cashDrawerTransactions, [tx])
+    return tx
+  }
   await trackWrite(() =>
     setDoc(
       doc(collections.cashDrawerTransactions(), tx.id),
@@ -41,6 +45,11 @@ export async function recordCashDrawerTransaction(params: {
 export async function listCashDrawerTransactions(
   shiftId?: string
 ): Promise<CashDrawerTransaction[]> {
+  if (isAppOffline()) {
+    let transactions = await getCachedDocs<CashDrawerTransaction>(COLLECTIONS.cashDrawerTransactions)
+    if (shiftId) transactions = transactions.filter((tx) => tx.shiftId === shiftId)
+    return transactions.sort((a, b) => b.createdAt - a.createdAt)
+  }
   try {
     const base = query(collections.cashDrawerTransactions(), orderBy('createdAt', 'desc'))
     const q = shiftId ? query(base, where('shiftId', '==', shiftId)) : base

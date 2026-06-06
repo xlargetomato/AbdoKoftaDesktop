@@ -14,9 +14,19 @@ import { mapDoc, stripId } from '@renderer/lib/utils/firestore-mapper'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDoc, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDoc,
+  getCachedDocs,
+  isAppOffline
+} from '@renderer/lib/offline/sqlite-cache'
 
 export async function listCategories(): Promise<MenuCategory[]> {
+  if (isAppOffline()) {
+    return (await getCachedDocs<MenuCategory>(COLLECTIONS.menuCategories)).sort(
+      (a, b) => a.sortOrder - b.sortOrder
+    )
+  }
   try {
     const snap = await getDocs(
       query(collections.menuCategories(), orderBy('sortOrder'))
@@ -45,6 +55,10 @@ export async function createCategory(
     createdAt: now,
     updatedAt: now
   }
+  if (isAppOffline()) {
+    await cacheDocs(COLLECTIONS.menuCategories, [cat])
+    return cat
+  }
   await setDoc(
     doc(collections.menuCategories(), id),
     omitUndefined(stripId(cat) as Record<string, unknown>)
@@ -57,6 +71,11 @@ export async function updateCategory(
   id: string,
   patch: Partial<Pick<MenuCategory, 'nameAr' | 'sortOrder' | 'active'>>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDoc<MenuCategory>(COLLECTIONS.menuCategories, id)
+    if (cached) await cacheDocs(COLLECTIONS.menuCategories, [{ ...cached, ...patch, updatedAt: Date.now() }])
+    return
+  }
   await updateDoc(
     doc(collections.menuCategories(), id),
     omitUndefined({ ...patch, updatedAt: Date.now() })
@@ -67,6 +86,11 @@ export async function updateMenuItem(
   id: string,
   patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'isWeighted' | 'weightedPriceOptions' | 'allowCustomWeight' | 'customWeightUnitPrice' | 'active'>>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, id)
+    if (cached) await cacheDocs(COLLECTIONS.menuItems, [{ ...cached, ...patch, updatedAt: Date.now() }])
+    return
+  }
   await updateDoc(
     doc(collections.menuItems(), id),
     omitUndefined({ ...patch, updatedAt: Date.now() })
@@ -80,6 +104,7 @@ async function categoryHasMenuItems(categoryId: string): Promise<boolean> {
 }
 
 export async function deleteCategory(id: string): Promise<void> {
+  if (isAppOffline()) throw new Error('لا يمكن الحذف أثناء عدم الاتصال')
   if (await categoryHasMenuItems(id)) {
     throw new Error('لا يمكن الحذف — التصنيف يحتوي أصنافاً. احذف الأصناف أولاً.')
   }
@@ -93,13 +118,17 @@ export async function deleteCategory(id: string): Promise<void> {
 
 export async function listMenuItems(activeOnly = false): Promise<MenuItem[]> {
   let items: MenuItem[]
-  try {
-    const snap = await getDocs(collections.menuItems())
-    items = snap.docs.map((d) => mapDoc<MenuItem>(d))
-    await cacheDocs(COLLECTIONS.menuItems, items)
-  } catch (e) {
+  if (isAppOffline()) {
     items = await getCachedDocs<MenuItem>(COLLECTIONS.menuItems)
-    if (!items.length) throw e
+  } else {
+    try {
+      const snap = await getDocs(collections.menuItems())
+      items = snap.docs.map((d) => mapDoc<MenuItem>(d))
+      await cacheDocs(COLLECTIONS.menuItems, items)
+    } catch (e) {
+      items = await getCachedDocs<MenuItem>(COLLECTIONS.menuItems)
+      if (!items.length) throw e
+    }
   }
   if (activeOnly) items = items.filter((i) => i.active)
   // Sort by sortOrder, fallback to name for items without it
@@ -114,6 +143,17 @@ export async function listMenuItems(activeOnly = false): Promise<MenuItem[]> {
 export async function reorderMenuItems(
   items: Array<{ id: string; sortOrder: number }>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDocs<MenuItem>(COLLECTIONS.menuItems)
+    const sortById = new Map(items.map((item) => [item.id, item.sortOrder]))
+    await cacheDocs(
+      COLLECTIONS.menuItems,
+      cached
+        .filter((item) => sortById.has(item.id))
+        .map((item) => ({ ...item, sortOrder: sortById.get(item.id), updatedAt: Date.now() }))
+    )
+    return
+  }
   await Promise.all(
     items.map(({ id, sortOrder }) =>
       updateDoc(doc(collections.menuItems(), id), { sortOrder, updatedAt: Date.now() })
@@ -124,6 +164,17 @@ export async function reorderMenuItems(
 export async function reorderCategories(
   cats: Array<{ id: string; sortOrder: number }>
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDocs<MenuCategory>(COLLECTIONS.menuCategories)
+    const sortById = new Map(cats.map((cat) => [cat.id, cat.sortOrder]))
+    await cacheDocs(
+      COLLECTIONS.menuCategories,
+      cached
+        .filter((cat) => sortById.has(cat.id))
+        .map((cat) => ({ ...cat, sortOrder: sortById.get(cat.id) ?? cat.sortOrder, updatedAt: Date.now() }))
+    )
+    return
+  }
   await Promise.all(
     cats.map(({ id, sortOrder }) =>
       updateCategory(id, { sortOrder })
@@ -134,6 +185,10 @@ export async function reorderCategories(
 export async function getRecipeByMenuItem(
   menuItemId: string
 ): Promise<Recipe | null> {
+  if (isAppOffline()) {
+    const recipes = await getCachedDocs<Recipe>(COLLECTIONS.recipes)
+    return recipes.find((r) => r.menuItemId === menuItemId) ?? null
+  }
   try {
     const q = query(
       collections.recipes(),
@@ -153,6 +208,9 @@ export async function getRecipeByMenuItem(
 }
 
 export async function getRecipe(recipeId: string): Promise<Recipe | null> {
+  if (isAppOffline()) {
+    return getCachedDoc<Recipe>(COLLECTIONS.recipes, recipeId)
+  }
   try {
     const snap = await getDoc(doc(collections.recipes(), recipeId))
     if (!snap.exists()) return null
@@ -210,6 +268,14 @@ export async function createMenuItemWithRecipe(params: {
     updatedAt: now
   }
 
+  if (isAppOffline()) {
+    await Promise.all([
+      cacheDocs(COLLECTIONS.menuItems, [item]),
+      cacheDocs(COLLECTIONS.recipes, [recipe])
+    ])
+    return { item, recipe }
+  }
+
   await setDoc(
     doc(collections.recipes(), recipeId),
     omitUndefined(stripId(recipe) as Record<string, unknown>)
@@ -230,6 +296,18 @@ export async function updateRecipe(
   lines: RecipeLine[],
   nameAr?: string
 ): Promise<void> {
+  if (isAppOffline()) {
+    const cached = await getCachedDoc<Recipe>(COLLECTIONS.recipes, recipeId)
+    if (cached) {
+      await cacheDocs(COLLECTIONS.recipes, [{
+        ...cached,
+        lines,
+        ...(nameAr ? { nameAr } : {}),
+        updatedAt: Date.now()
+      }])
+    }
+    return
+  }
   await updateDoc(doc(collections.recipes(), recipeId), {
     lines,
     ...(nameAr ? { nameAr } : {}),
@@ -238,6 +316,7 @@ export async function updateRecipe(
 }
 
 export async function deleteMenuItem(id: string, recipeId: string): Promise<void> {
+  if (isAppOffline()) throw new Error('لا يمكن الحذف أثناء عدم الاتصال')
   await deleteDoc(doc(collections.menuItems(), id))
   await deleteDoc(doc(collections.recipes(), recipeId))
 }

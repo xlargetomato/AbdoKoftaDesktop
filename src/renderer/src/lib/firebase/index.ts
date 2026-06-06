@@ -1,4 +1,4 @@
-export { getFirebaseApp } from './app'
+export { firebaseConfig, getFirebaseApp } from './app'
 export { auth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from './auth'
 export {
   getDb,

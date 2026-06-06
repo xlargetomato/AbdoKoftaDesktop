@@ -16,13 +16,11 @@ const CLASS: Record<SyncStatus, string> = {
 
 export function SyncStatusBadge(): React.ReactElement {
   const status = useSyncStore((s) => s.status)
-  const display: SyncStatus =
-    status === 'synced' && navigator.onLine ? 'online' : status
 
   return (
-    <span className={`sync-badge ${CLASS[display]}`} title={LABELS[display]}>
+    <span className={`sync-badge ${CLASS[status]}`} title={LABELS[status]}>
       <span className="sync-badge__dot" />
-      {LABELS[display]}
+      {LABELS[status]}
     </span>
   )
 }
