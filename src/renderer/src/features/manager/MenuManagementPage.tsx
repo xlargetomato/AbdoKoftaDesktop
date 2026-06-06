@@ -29,7 +29,7 @@ function moveItem<T>(arr: T[], idx: number, dir: -1 | 1): T[] {
 type WeightedPriceOptionForm = {
   id: string
   label: string
-  weightKg: string
+  weightGrams: string
   price: string
 }
 
@@ -51,15 +51,20 @@ type ItemEditState = {
   active: boolean
 }
 
-function newWeightedOption(): WeightedPriceOptionForm {
-  return { id: crypto.randomUUID(), label: '', weightKg: '', price: '' }
+function newWeightedOption(kiloPreset = false): WeightedPriceOptionForm {
+  return {
+    id: crypto.randomUUID(),
+    label: kiloPreset ? '1 كجم' : '',
+    weightGrams: kiloPreset ? '1000' : '',
+    price: ''
+  }
 }
 
 function toWeightedOptionForm(option: WeightedPriceOption): WeightedPriceOptionForm {
   return {
     id: option.id,
     label: option.label,
-    weightKg: String(option.weightKg),
+    weightGrams: String(Math.round(option.weightKg * 1000)),
     price: String(option.price)
   }
 }
@@ -69,7 +74,7 @@ function normalizeWeightedOptions(options: WeightedPriceOptionForm[]): WeightedP
     .map((option) => ({
       id: option.id || crypto.randomUUID(),
       label: option.label.trim(),
-      weightKg: Number(option.weightKg),
+      weightKg: Number(option.weightGrams) / 1000,
       price: Number(option.price)
     }))
     .filter((option) => option.label && option.weightKg > 0 && option.price >= 0)
@@ -88,7 +93,7 @@ export function MenuManagementPage(): React.ReactElement {
     nameAr: '',
     price: '',
     isWeighted: false,
-    weightedPriceOptions: [newWeightedOption()] as WeightedPriceOptionForm[],
+    weightedPriceOptions: [newWeightedOption(true)] as WeightedPriceOptionForm[],
     allowCustomWeight: false,
     customWeightUnitPrice: '',
     lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] as RecipeLineForm[]
@@ -180,7 +185,11 @@ export function MenuManagementPage(): React.ReactElement {
       await createMenuItemWithRecipe({
         categoryId: itemForm.categoryId,
         nameAr: itemForm.nameAr.trim(),
-        price: Number(itemForm.price),
+        price: itemForm.isWeighted
+          ? (itemForm.allowCustomWeight && Number(itemForm.customWeightUnitPrice) > 0
+              ? Number(itemForm.customWeightUnitPrice)
+              : weightedPriceOptions[0] ? weightedPriceOptions[0].price / weightedPriceOptions[0].weightKg : 0)
+          : Number(itemForm.price),
         isWeighted: itemForm.isWeighted,
         weightedPriceOptions,
         allowCustomWeight: itemForm.isWeighted ? itemForm.allowCustomWeight : undefined,
@@ -193,7 +202,7 @@ export function MenuManagementPage(): React.ReactElement {
         nameAr: '',
         price: '',
         isWeighted: false,
-        weightedPriceOptions: [newWeightedOption()],
+        weightedPriceOptions: [newWeightedOption(true)],
         allowCustomWeight: false,
         customWeightUnitPrice: '',
         lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }]
@@ -209,7 +218,11 @@ export function MenuManagementPage(): React.ReactElement {
     if (editingItem.isWeighted && !validateWeightedPricing(weightedPriceOptions, editingItem.allowCustomWeight, editingItem.customWeightUnitPrice)) return
     await updateMenuItem(editingItem.id, {
       nameAr: editingItem.nameAr.trim(),
-      price: Number(editingItem.price),
+      price: editingItem.isWeighted
+        ? (editingItem.allowCustomWeight && Number(editingItem.customWeightUnitPrice) > 0
+            ? Number(editingItem.customWeightUnitPrice)
+            : weightedPriceOptions[0] ? weightedPriceOptions[0].price / weightedPriceOptions[0].weightKg : 0)
+        : Number(editingItem.price),
       categoryId: editingItem.categoryId,
       isWeighted: editingItem.isWeighted,
       weightedPriceOptions: editingItem.isWeighted ? weightedPriceOptions : [],
@@ -329,12 +342,24 @@ export function MenuManagementPage(): React.ReactElement {
             <span>اسم الصنف</span>
             <input value={itemForm.nameAr} onChange={(e) => setItemForm((f) => ({ ...f, nameAr: e.target.value }))} required />
           </label>
-          <label className="field">
-            <span>{itemForm.isWeighted ? 'سعر افتراضي للكيلو' : 'السعر'}</span>
-            <input type="number" min="0" step="0.01" value={itemForm.price} onChange={(e) => setItemForm((f) => ({ ...f, price: e.target.value }))} required />
-          </label>
+          {!itemForm.isWeighted && (
+            <label className="field">
+              <span>السعر</span>
+              <input type="number" min="0" step="0.01" value={itemForm.price} onChange={(e) => setItemForm((f) => ({ ...f, price: e.target.value }))} required />
+            </label>
+          )}
           <label className="field field--checkbox">
-            <input type="checkbox" checked={itemForm.isWeighted} onChange={(e) => setItemForm((f) => ({ ...f, isWeighted: e.target.checked }))} />
+            <input
+              type="checkbox"
+              checked={itemForm.isWeighted}
+              onChange={(e) => setItemForm((f) => ({
+                ...f,
+                isWeighted: e.target.checked,
+                weightedPriceOptions: e.target.checked && f.weightedPriceOptions.length === 0
+                  ? [newWeightedOption(true)]
+                  : f.weightedPriceOptions
+              }))}
+            />
             <span>منتج ميزان - الوصفة لكل 1 كجم</span>
           </label>
 
@@ -344,7 +369,7 @@ export function MenuManagementPage(): React.ReactElement {
               {itemForm.weightedPriceOptions.map((option, idx) => (
                 <div key={option.id} className="weighted-pricing-row">
                   <input value={option.label} onChange={(e) => updateWeightedOption(idx, { label: e.target.value })} placeholder="اسم الزر مثل 1/2" />
-                  <input type="number" min="0" step="0.001" value={option.weightKg} onChange={(e) => updateWeightedOption(idx, { weightKg: e.target.value })} placeholder="الوزن بالكيلو" />
+                  <input type="number" min="1" step="1" value={option.weightGrams} onChange={(e) => updateWeightedOption(idx, { weightGrams: e.target.value })} placeholder="الوزن بالجرام" />
                   <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateWeightedOption(idx, { price: e.target.value })} placeholder="السعر" />
                   <button type="button" className="btn btn--danger btn--sm" onClick={() => setItemForm((f) => ({ ...f, weightedPriceOptions: f.weightedPriceOptions.filter((_, i) => i !== idx) }))}><MdClose /></button>
                 </div>
@@ -418,7 +443,15 @@ export function MenuManagementPage(): React.ReactElement {
                     </div>
                   </td>
                   <td>{isEditing ? <input className="inline-edit-input" value={editingItem.nameAr} onChange={(e) => setEditingItem({ ...editingItem, nameAr: e.target.value })} autoFocus /> : item.nameAr}</td>
-                  <td>{isEditing ? <input className="inline-edit-input" type="number" step="0.01" value={editingItem.price} onChange={(e) => setEditingItem({ ...editingItem, price: e.target.value })} style={{ width: 80 }} /> : item.price.toFixed(2)}</td>
+                  <td>
+                    {isEditing ? (
+                      editingItem.isWeighted ? (
+                        <span style={{ color: 'var(--color-muted)', fontSize: '0.82rem' }}>من أسعار الميزان</span>
+                      ) : (
+                        <input className="inline-edit-input" type="number" step="0.01" value={editingItem.price} onChange={(e) => setEditingItem({ ...editingItem, price: e.target.value })} style={{ width: 80 }} />
+                      )
+                    ) : item.isWeighted ? 'ميزان' : item.price.toFixed(2)}
+                  </td>
                   <td>{isEditing ? (
                     <select className="inline-edit-input" value={editingItem.categoryId} onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value })}>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
@@ -456,7 +489,7 @@ export function MenuManagementPage(): React.ReactElement {
                         {editingItem.weightedPriceOptions.map((option, optionIdx) => (
                           <div key={option.id} className="weighted-pricing-row">
                             <input value={option.label} onChange={(e) => updateEditingWeightedOption(optionIdx, { label: e.target.value })} placeholder="اسم الزر" />
-                            <input type="number" min="0" step="0.001" value={option.weightKg} onChange={(e) => updateEditingWeightedOption(optionIdx, { weightKg: e.target.value })} placeholder="كجم" />
+                            <input type="number" min="1" step="1" value={option.weightGrams} onChange={(e) => updateEditingWeightedOption(optionIdx, { weightGrams: e.target.value })} placeholder="جرام" />
                             <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateEditingWeightedOption(optionIdx, { price: e.target.value })} placeholder="السعر" />
                             <button type="button" className="btn btn--danger btn--sm" onClick={() => setEditingItem({ ...editingItem, weightedPriceOptions: editingItem.weightedPriceOptions.filter((_, i) => i !== optionIdx) })}><MdClose /></button>
                           </div>
@@ -473,7 +506,7 @@ export function MenuManagementPage(): React.ReactElement {
                     )}
                     {isEditing && !editingItem.isWeighted && (
                       <label className="field field--checkbox weighted-pricing-editor--inline">
-                        <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked, weightedPriceOptions: [newWeightedOption()] })} />
+                        <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked, weightedPriceOptions: [newWeightedOption(true)] })} />
                         <span>منتج ميزان</span>
                       </label>
                     )}
