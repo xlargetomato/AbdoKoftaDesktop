@@ -5,25 +5,39 @@ import {
   closeShift,
   getShiftSummary,
   listShifts,
+  unarchiveShifts,
   type ShiftSummary
 } from '@renderer/features/shifts/shift-service'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
-import { MdArchive, MdLock, MdRefresh } from 'react-icons/md'
+import { MdArchive, MdLock, MdRefresh, MdUnarchive } from 'react-icons/md'
+
+type ShiftViewMode = 'active' | 'archived'
 
 export function ShiftsPage(): React.ReactElement {
   const user = useAuthStore((s) => s.user)!
   const [shifts, setShifts] = useState<Shift[]>([])
+  const [viewMode, setViewMode] = useState<ShiftViewMode>('active')
   const [selected, setSelected] = useState<ShiftSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
+  const [counts, setCounts] = useState({ active: 0, archived: 0 })
 
   const load = useCallback(async () => {
     setLoading(true)
-    const data = await listShifts(false)
+    const allShifts = await listShifts(true)
+    const activeShifts = allShifts.filter((s) => !s.archived)
+    const archivedShifts = allShifts.filter((s) => !!s.archived)
+    const data = viewMode === 'archived' ? archivedShifts : activeShifts
+    setCounts({ active: activeShifts.length, archived: archivedShifts.length })
     setShifts(data)
     setLoading(false)
-    if (data[0]) setSelected(await getShiftSummary(data[0]))
-  }, [])
+
+    if (selected && !data.some((s) => s.id === selected.shift.id)) {
+      setSelected(null)
+    } else if (!selected && data[0]) {
+      setSelected(await getShiftSummary(data[0]))
+    }
+  }, [selected, viewMode])
 
   useEffect(() => { void load() }, [load])
 
@@ -44,13 +58,40 @@ export function ShiftsPage(): React.ReactElement {
     await load()
   }
 
+  async function handleUnarchive(shift: Shift): Promise<void> {
+    await unarchiveShifts([shift.id])
+    setMessage('تم إلغاء أرشفة الشيفت')
+    setSelected(null)
+    await load()
+  }
+
   if (loading) return <p className="app-loading">جاري التحميل...</p>
 
   return (
     <div className="shifts-page">
       {message && <p className="form-message form-message--ok">{message}</p>}
       <div className="card">
-        <h2 className="card__title">الشيفتات غير المؤرشفة ({shifts.length})</h2>
+        <div className="reports-filter__options" style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className={`reports-filter__btn${viewMode === 'active' ? ' reports-filter__btn--active' : ''}`}
+            onClick={() => { setViewMode('active'); setSelected(null) }}
+          >
+            الشيفتات النشطة ({counts.active})
+          </button>
+          <button
+            type="button"
+            className={`reports-filter__btn${viewMode === 'archived' ? ' reports-filter__btn--active' : ''}`}
+            onClick={() => { setViewMode('archived'); setSelected(null) }}
+          >
+            الشيفتات المؤرشفة ({counts.archived})
+          </button>
+        </div>
+
+        <h2 className="card__title">
+          {viewMode === 'archived' ? 'الشيفتات المؤرشفة' : 'الشيفتات غير المؤرشفة'} ({shifts.length})
+        </h2>
+
         <table className="data-table">
           <thead>
             <tr>
@@ -63,7 +104,13 @@ export function ShiftsPage(): React.ReactElement {
             </tr>
           </thead>
           <tbody>
-            {shifts.map((shift) => (
+            {shifts.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-muted)' }}>
+                  لا توجد شيفتات في هذا القسم
+                </td>
+              </tr>
+            ) : shifts.map((shift) => (
               <tr key={shift.id}>
                 <td>{shift.cashierName}</td>
                 <td dir="ltr">{shift.cashierCode ?? '--'}</td>
@@ -75,15 +122,21 @@ export function ShiftsPage(): React.ReactElement {
                     <button type="button" className="btn btn--secondary btn--sm" onClick={() => void openSummary(shift)}>
                       <MdRefresh /> عرض
                     </button>
-                    {shift.status === 'open' && (
+                    {shift.status === 'open' && viewMode === 'active' && (
                       <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleClose(shift)}>
                         <MdLock /> تقفيل
                       </button>
                     )}
                     {shift.status === 'closed' && (
-                      <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleArchive(shift)}>
-                        <MdArchive /> أرشفة
-                      </button>
+                      viewMode === 'archived' ? (
+                        <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleUnarchive(shift)}>
+                          <MdUnarchive /> إلغاء الأرشفة
+                        </button>
+                      ) : (
+                        <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleArchive(shift)}>
+                          <MdArchive /> أرشفة
+                        </button>
+                      )
                     )}
                   </div>
                 </td>
@@ -115,7 +168,7 @@ export function ShiftsPage(): React.ReactElement {
           </table>
           <h3 className="section-title">المخزون المستخدم</h3>
           <table className="data-table">
-            <thead><tr><th>المكون</th><th>الكمية</th><th>الوحدة</th></tr></thead>
+            <thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th></tr></thead>
             <tbody>
               {selected.usedInventory.map((tx) => (
                 <tr key={tx.id}><td>{tx.ingredientId}</td><td>{tx.quantity.toFixed(2)}</td><td>{tx.unit}</td></tr>

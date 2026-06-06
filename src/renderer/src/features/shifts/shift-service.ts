@@ -89,6 +89,17 @@ export async function archiveShifts(shiftIds: string[]): Promise<void> {
   )
 }
 
+export async function unarchiveShifts(shiftIds: string[]): Promise<void> {
+  await Promise.all(
+    shiftIds.map((id) =>
+      updateDoc(doc(collections.shifts(), id), {
+        archived: false,
+        updatedAt: Date.now()
+      })
+    )
+  )
+}
+
 export async function getUnarchivedShiftCount(): Promise<number> {
   const shifts = await listShifts(false)
   return shifts.length
