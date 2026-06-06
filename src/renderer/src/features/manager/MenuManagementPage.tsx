@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import type { MenuCategory, MenuItem, RecipeLine } from '@shared/types'
+import type { MenuCategory, MenuItem, RecipeLine, WeightedPriceOption } from '@shared/types'
 import {
   listCategories,
   createCategory,
@@ -26,13 +26,53 @@ function moveItem<T>(arr: T[], idx: number, dir: -1 | 1): T[] {
   return next
 }
 
+type WeightedPriceOptionForm = {
+  id: string
+  label: string
+  weightKg: string
+  price: string
+}
+
+type RecipeLineForm = {
+  ingredientId: string
+  quantity: string
+  unit: string
+}
+
 type ItemEditState = {
   id: string
   nameAr: string
   price: string
   categoryId: string
   isWeighted: boolean
+  weightedPriceOptions: WeightedPriceOptionForm[]
+  allowCustomWeight: boolean
+  customWeightUnitPrice: string
   active: boolean
+}
+
+function newWeightedOption(): WeightedPriceOptionForm {
+  return { id: crypto.randomUUID(), label: '', weightKg: '', price: '' }
+}
+
+function toWeightedOptionForm(option: WeightedPriceOption): WeightedPriceOptionForm {
+  return {
+    id: option.id,
+    label: option.label,
+    weightKg: String(option.weightKg),
+    price: String(option.price)
+  }
+}
+
+function normalizeWeightedOptions(options: WeightedPriceOptionForm[]): WeightedPriceOption[] {
+  return options
+    .map((option) => ({
+      id: option.id || crypto.randomUUID(),
+      label: option.label.trim(),
+      weightKg: Number(option.weightKg),
+      price: Number(option.price)
+    }))
+    .filter((option) => option.label && option.weightKg > 0 && option.price >= 0)
 }
 
 export function MenuManagementPage(): React.ReactElement {
@@ -48,9 +88,10 @@ export function MenuManagementPage(): React.ReactElement {
     nameAr: '',
     price: '',
     isWeighted: false,
-    lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] as Array<{
-      ingredientId: string; quantity: string; unit: string
-    }>
+    weightedPriceOptions: [newWeightedOption()] as WeightedPriceOptionForm[],
+    allowCustomWeight: false,
+    customWeightUnitPrice: '',
+    lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] as RecipeLineForm[]
   })
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null)
   const [recipeLines, setRecipeLines] = useState<RecipeLine[]>([])
@@ -67,8 +108,6 @@ export function MenuManagementPage(): React.ReactElement {
   }, [])
 
   useEffect(() => { void load() }, [load])
-
-  // ── Category actions ──────────────────────────────────────────────────────
 
   async function addCategory(e: FormEvent): Promise<void> {
     e.preventDefault()
@@ -97,7 +136,34 @@ export function MenuManagementPage(): React.ReactElement {
     finally { setSavingOrder(false) }
   }
 
-  // ── Menu item actions ─────────────────────────────────────────────────────
+  function updateWeightedOption(index: number, patch: Partial<WeightedPriceOptionForm>): void {
+    setItemForm((form) => {
+      const weightedPriceOptions = [...form.weightedPriceOptions]
+      weightedPriceOptions[index] = { ...weightedPriceOptions[index]!, ...patch }
+      return { ...form, weightedPriceOptions }
+    })
+  }
+
+  function updateEditingWeightedOption(index: number, patch: Partial<WeightedPriceOptionForm>): void {
+    setEditingItem((item) => {
+      if (!item) return item
+      const weightedPriceOptions = [...item.weightedPriceOptions]
+      weightedPriceOptions[index] = { ...weightedPriceOptions[index]!, ...patch }
+      return { ...item, weightedPriceOptions }
+    })
+  }
+
+  function validateWeightedPricing(options: WeightedPriceOption[], allowCustom: boolean, customPrice: string): boolean {
+    if (options.length === 0) {
+      setMessage('أضف سعر ميزان واحد على الأقل')
+      return false
+    }
+    if (allowCustom && Number(customPrice) <= 0) {
+      setMessage('حدد سعر الكيلو للوزن المخصص')
+      return false
+    }
+    return true
+  }
 
   async function addItem(e: FormEvent): Promise<void> {
     e.preventDefault()
@@ -107,16 +173,31 @@ export function MenuManagementPage(): React.ReactElement {
       .filter((l) => l.ingredientId && l.quantity)
       .map((l) => ({ ingredientId: l.ingredientId, quantity: Number(l.quantity), unit: l.unit }))
     if (lines.length === 0) { setMessage('أضف مكوّناً واحداً على الأقل'); return }
+    const weightedPriceOptions = normalizeWeightedOptions(itemForm.weightedPriceOptions)
+    if (itemForm.isWeighted && !validateWeightedPricing(weightedPriceOptions, itemForm.allowCustomWeight, itemForm.customWeightUnitPrice)) return
+
     try {
       await createMenuItemWithRecipe({
         categoryId: itemForm.categoryId,
         nameAr: itemForm.nameAr.trim(),
         price: Number(itemForm.price),
         isWeighted: itemForm.isWeighted,
+        weightedPriceOptions,
+        allowCustomWeight: itemForm.isWeighted ? itemForm.allowCustomWeight : undefined,
+        customWeightUnitPrice: itemForm.isWeighted && itemForm.allowCustomWeight ? Number(itemForm.customWeightUnitPrice) : undefined,
         lines,
         sortOrder: items.length
       })
-      setItemForm({ categoryId: itemForm.categoryId, nameAr: '', price: '', isWeighted: false, lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] })
+      setItemForm({
+        categoryId: itemForm.categoryId,
+        nameAr: '',
+        price: '',
+        isWeighted: false,
+        weightedPriceOptions: [newWeightedOption()],
+        allowCustomWeight: false,
+        customWeightUnitPrice: '',
+        lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }]
+      })
       setMessage('تم حفظ الصنف')
       await load()
     } catch (err) { setMessage(err instanceof Error ? err.message : 'فشل') }
@@ -124,11 +205,16 @@ export function MenuManagementPage(): React.ReactElement {
 
   async function saveItemEdit(): Promise<void> {
     if (!editingItem) return
+    const weightedPriceOptions = normalizeWeightedOptions(editingItem.weightedPriceOptions)
+    if (editingItem.isWeighted && !validateWeightedPricing(weightedPriceOptions, editingItem.allowCustomWeight, editingItem.customWeightUnitPrice)) return
     await updateMenuItem(editingItem.id, {
       nameAr: editingItem.nameAr.trim(),
       price: Number(editingItem.price),
       categoryId: editingItem.categoryId,
       isWeighted: editingItem.isWeighted,
+      weightedPriceOptions: editingItem.isWeighted ? weightedPriceOptions : [],
+      allowCustomWeight: editingItem.isWeighted ? editingItem.allowCustomWeight : false,
+      customWeightUnitPrice: editingItem.isWeighted && editingItem.allowCustomWeight ? Number(editingItem.customWeightUnitPrice) : undefined,
       active: editingItem.active
     })
     setEditingItem(null)
@@ -159,7 +245,19 @@ export function MenuManagementPage(): React.ReactElement {
     setMessage('تم تعديل الوصفة')
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  function startEditItem(item: MenuItem): void {
+    setEditingItem({
+      id: item.id,
+      nameAr: item.nameAr,
+      price: String(item.price),
+      categoryId: item.categoryId,
+      isWeighted: !!item.isWeighted,
+      weightedPriceOptions: (item.weightedPriceOptions ?? []).map(toWeightedOptionForm),
+      allowCustomWeight: !!item.allowCustomWeight,
+      customWeightUnitPrice: item.customWeightUnitPrice != null ? String(item.customWeightUnitPrice) : '',
+      active: item.active
+    })
+  }
 
   return (
     <>
@@ -168,9 +266,8 @@ export function MenuManagementPage(): React.ReactElement {
           {message}
         </p>
       )}
-      {savingOrder && <p className="form-message" role="status">جارٍ حفظ الترتيب…</p>}
+      {savingOrder && <p className="form-message" role="status">جارٍ حفظ الترتيب...</p>}
 
-      {/* ── Categories ── */}
       <div className="card">
         <h2 className="card__title">التصنيفات</h2>
         <form onSubmit={(e) => void addCategory(e)} className="page-toolbar">
@@ -203,16 +300,13 @@ export function MenuManagementPage(): React.ReactElement {
                   </>
                 ) : (
                   <>
-                    <button type="button" className="btn btn--secondary btn--sm"
-                      onClick={() => { setEditingCatId(c.id); setEditingCatName(c.nameAr) }}>
+                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => { setEditingCatId(c.id); setEditingCatName(c.nameAr) }}>
                       <MdEdit /> تعديل
                     </button>
-                    <button type="button" className={`btn btn--sm ${c.active ? 'btn--secondary' : 'btn--danger'}`}
-                      onClick={() => void updateCategory(c.id, { active: !c.active }).then(load)}>
+                    <button type="button" className={`btn btn--sm ${c.active ? 'btn--secondary' : 'btn--danger'}`} onClick={() => void updateCategory(c.id, { active: !c.active }).then(load)}>
                       {c.active ? 'مفعّل' : 'معطّل'}
                     </button>
-                    <ConfirmDeleteButton confirmMessage={`حذف تصنيف "${c.nameAr}"؟`}
-                      onConfirm={async () => { await deleteCategory(c.id); setMessage(`تم حذف "${c.nameAr}"`); await load() }} />
+                    <ConfirmDeleteButton confirmMessage={`حذف تصنيف "${c.nameAr}"؟`} onConfirm={async () => { await deleteCategory(c.id); setMessage(`تم حذف "${c.nameAr}"`); await load() }} />
                   </>
                 )}
               </div>
@@ -221,7 +315,6 @@ export function MenuManagementPage(): React.ReactElement {
         </ul>
       </div>
 
-      {/* ── Add item ── */}
       <div className="card">
         <h2 className="card__title">إضافة صنف + وصفة</h2>
         <form onSubmit={(e) => void addItem(e)}>
@@ -237,17 +330,40 @@ export function MenuManagementPage(): React.ReactElement {
             <input value={itemForm.nameAr} onChange={(e) => setItemForm((f) => ({ ...f, nameAr: e.target.value }))} required />
           </label>
           <label className="field">
-            <span>السعر</span>
+            <span>{itemForm.isWeighted ? 'سعر افتراضي للكيلو' : 'السعر'}</span>
             <input type="number" min="0" step="0.01" value={itemForm.price} onChange={(e) => setItemForm((f) => ({ ...f, price: e.target.value }))} required />
           </label>
           <label className="field field--checkbox">
-            <input
-              type="checkbox"
-              checked={itemForm.isWeighted}
-              onChange={(e) => setItemForm((f) => ({ ...f, isWeighted: e.target.checked }))}
-            />
-            <span>منتج ميزان - السعر والوصفة لكل 1 كجم</span>
-          </label>          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
+            <input type="checkbox" checked={itemForm.isWeighted} onChange={(e) => setItemForm((f) => ({ ...f, isWeighted: e.target.checked }))} />
+            <span>منتج ميزان - الوصفة لكل 1 كجم</span>
+          </label>
+
+          {itemForm.isWeighted && (
+            <div className="weighted-pricing-editor">
+              <h3>أسعار أزرار الميزان</h3>
+              {itemForm.weightedPriceOptions.map((option, idx) => (
+                <div key={option.id} className="weighted-pricing-row">
+                  <input value={option.label} onChange={(e) => updateWeightedOption(idx, { label: e.target.value })} placeholder="اسم الزر مثل 1/2" />
+                  <input type="number" min="0" step="0.001" value={option.weightKg} onChange={(e) => updateWeightedOption(idx, { weightKg: e.target.value })} placeholder="الوزن بالكيلو" />
+                  <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateWeightedOption(idx, { price: e.target.value })} placeholder="السعر" />
+                  <button type="button" className="btn btn--danger btn--sm" onClick={() => setItemForm((f) => ({ ...f, weightedPriceOptions: f.weightedPriceOptions.filter((_, i) => i !== idx) }))}><MdClose /></button>
+                </div>
+              ))}
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setItemForm((f) => ({ ...f, weightedPriceOptions: [...f.weightedPriceOptions, newWeightedOption()] }))}>+ سعر ميزان</button>
+              <label className="field field--checkbox weighted-pricing-custom">
+                <input type="checkbox" checked={itemForm.allowCustomWeight} onChange={(e) => setItemForm((f) => ({ ...f, allowCustomWeight: e.target.checked }))} />
+                <span>السماح بوزن مخصص</span>
+              </label>
+              {itemForm.allowCustomWeight && (
+                <label className="field">
+                  <span>سعر الكيلو للوزن المخصص</span>
+                  <input type="number" min="0" step="0.01" value={itemForm.customWeightUnitPrice} onChange={(e) => setItemForm((f) => ({ ...f, customWeightUnitPrice: e.target.value }))} required />
+                </label>
+              )}
+            </div>
+          )}
+
+          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
           {itemForm.lines.map((line, idx) => (
             <div key={idx} className="page-toolbar" style={{ gap: 6 }}>
               <select value={line.ingredientId} onChange={(e) => {
@@ -266,24 +382,17 @@ export function MenuManagementPage(): React.ReactElement {
               }} style={{ width: 80 }} />
               <span style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>{line.unit}</span>
               {itemForm.lines.length > 1 && (
-                <button type="button" className="btn btn--danger btn--sm"
-                  onClick={() => setItemForm((f) => ({ ...f, lines: f.lines.filter((_, i) => i !== idx) }))}>
-                  <MdClose />
-                </button>
+                <button type="button" className="btn btn--danger btn--sm" onClick={() => setItemForm((f) => ({ ...f, lines: f.lines.filter((_, i) => i !== idx) }))}><MdClose /></button>
               )}
             </div>
           ))}
           <div className="form-actions">
-            <button type="button" className="btn btn--secondary btn--sm"
-              onClick={() => setItemForm((f) => ({ ...f, lines: [...f.lines, { ingredientId: '', quantity: '', unit: 'جرام' }] }))}>
-              + سطر وصفة
-            </button>
+            <button type="button" className="btn btn--secondary btn--sm" onClick={() => setItemForm((f) => ({ ...f, lines: [...f.lines, { ingredientId: '', quantity: '', unit: 'جرام' }] }))}>+ سطر وصفة</button>
             <button type="submit" className="btn btn--primary">حفظ الصنف</button>
           </div>
         </form>
       </div>
 
-      {/* ── Items list ── */}
       <div className="card">
         <h2 className="card__title">أصناف القائمة</h2>
         <table className="data-table">
@@ -308,39 +417,21 @@ export function MenuManagementPage(): React.ReactElement {
                       <button type="button" className="sort-arrow-btn" disabled={idx === items.length - 1} onClick={() => void moveMenuItem(idx, 1)} aria-label="أسفل"><MdArrowDownward /></button>
                     </div>
                   </td>
-                  <td>
-                    {isEditing ? (
-                      <input className="inline-edit-input" value={editingItem.nameAr}
-                        onChange={(e) => setEditingItem({ ...editingItem, nameAr: e.target.value })} autoFocus />
-                    ) : item.nameAr}
-                  </td>
-                  <td>
-                    {isEditing ? (
-                      <input className="inline-edit-input" type="number" step="0.01" value={editingItem.price}
-                        onChange={(e) => setEditingItem({ ...editingItem, price: e.target.value })} style={{ width: 80 }} />
-                    ) : item.price.toFixed(2)}
-                  </td>
-                  <td>
-                    {isEditing ? (
-                      <select className="inline-edit-input" value={editingItem.categoryId}
-                        onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value })}>
-                        {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                      </select>
-                    ) : (categories.find((c) => c.id === item.categoryId)?.nameAr ?? '—')}
-                  </td>
-                  <td>
-                    {isEditing ? (
-                      <select className="inline-edit-input" value={editingItem.active ? 'active' : 'inactive'}
-                        onChange={(e) => setEditingItem({ ...editingItem, active: e.target.value === 'active' })}>
-                        <option value="active">مفعّل</option>
-                        <option value="inactive">معطّل</option>
-                      </select>
-                    ) : (
-                      <span style={{ color: item.active ? 'var(--color-success)' : 'var(--color-muted)', fontWeight: 700, fontSize: '0.82rem' }}>
-                        {item.active ? 'مفعّل' : 'معطّل'}
-                      </span>
-                    )}
-                  </td>
+                  <td>{isEditing ? <input className="inline-edit-input" value={editingItem.nameAr} onChange={(e) => setEditingItem({ ...editingItem, nameAr: e.target.value })} autoFocus /> : item.nameAr}</td>
+                  <td>{isEditing ? <input className="inline-edit-input" type="number" step="0.01" value={editingItem.price} onChange={(e) => setEditingItem({ ...editingItem, price: e.target.value })} style={{ width: 80 }} /> : item.price.toFixed(2)}</td>
+                  <td>{isEditing ? (
+                    <select className="inline-edit-input" value={editingItem.categoryId} onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value })}>
+                      {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                    </select>
+                  ) : (categories.find((c) => c.id === item.categoryId)?.nameAr ?? '-')}</td>
+                  <td>{isEditing ? (
+                    <select className="inline-edit-input" value={editingItem.active ? 'active' : 'inactive'} onChange={(e) => setEditingItem({ ...editingItem, active: e.target.value === 'active' })}>
+                      <option value="active">مفعّل</option>
+                      <option value="inactive">معطّل</option>
+                    </select>
+                  ) : (
+                    <span style={{ color: item.active ? 'var(--color-success)' : 'var(--color-muted)', fontWeight: 700, fontSize: '0.82rem' }}>{item.active ? 'مفعّل' : 'معطّل'}</span>
+                  )}</td>
                   <td>
                     <div className="table-actions">
                       {isEditing ? (
@@ -350,16 +441,42 @@ export function MenuManagementPage(): React.ReactElement {
                         </>
                       ) : (
                         <>
-                          <button type="button" className="btn btn--secondary btn--sm"
-                            onClick={() => setEditingItem({ id: item.id, nameAr: item.nameAr, price: String(item.price), categoryId: item.categoryId, isWeighted: !!item.isWeighted, active: item.active })}>
-                            <MdEdit /> تعديل
-                          </button>
+                          <button type="button" className="btn btn--secondary btn--sm" onClick={() => startEditItem(item)}><MdEdit /> تعديل</button>
                           <button type="button" className="btn btn--secondary btn--sm" onClick={() => void openRecipe(item)}>الوصفة</button>
-                          <ConfirmDeleteButton confirmMessage={`حذف "${item.nameAr}" ووصفته؟`}
-                            onConfirm={async () => { await deleteMenuItem(item.id, item.recipeId); await load() }} />
+                          <ConfirmDeleteButton confirmMessage={`حذف "${item.nameAr}" ووصفته؟`} onConfirm={async () => { await deleteMenuItem(item.id, item.recipeId); await load() }} />
                         </>
                       )}
                     </div>
+                    {isEditing && editingItem.isWeighted && (
+                      <div className="weighted-pricing-editor weighted-pricing-editor--inline">
+                        <label className="field field--checkbox">
+                          <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked })} />
+                          <span>منتج ميزان</span>
+                        </label>
+                        {editingItem.weightedPriceOptions.map((option, optionIdx) => (
+                          <div key={option.id} className="weighted-pricing-row">
+                            <input value={option.label} onChange={(e) => updateEditingWeightedOption(optionIdx, { label: e.target.value })} placeholder="اسم الزر" />
+                            <input type="number" min="0" step="0.001" value={option.weightKg} onChange={(e) => updateEditingWeightedOption(optionIdx, { weightKg: e.target.value })} placeholder="كجم" />
+                            <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateEditingWeightedOption(optionIdx, { price: e.target.value })} placeholder="السعر" />
+                            <button type="button" className="btn btn--danger btn--sm" onClick={() => setEditingItem({ ...editingItem, weightedPriceOptions: editingItem.weightedPriceOptions.filter((_, i) => i !== optionIdx) })}><MdClose /></button>
+                          </div>
+                        ))}
+                        <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditingItem({ ...editingItem, weightedPriceOptions: [...editingItem.weightedPriceOptions, newWeightedOption()] })}>+ سعر ميزان</button>
+                        <label className="field field--checkbox weighted-pricing-custom">
+                          <input type="checkbox" checked={editingItem.allowCustomWeight} onChange={(e) => setEditingItem({ ...editingItem, allowCustomWeight: e.target.checked })} />
+                          <span>السماح بوزن مخصص</span>
+                        </label>
+                        {editingItem.allowCustomWeight && (
+                          <input className="inline-edit-input" type="number" min="0" step="0.01" value={editingItem.customWeightUnitPrice} onChange={(e) => setEditingItem({ ...editingItem, customWeightUnitPrice: e.target.value })} placeholder="سعر الكيلو المخصص" />
+                        )}
+                      </div>
+                    )}
+                    {isEditing && !editingItem.isWeighted && (
+                      <label className="field field--checkbox weighted-pricing-editor--inline">
+                        <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked, weightedPriceOptions: [newWeightedOption()] })} />
+                        <span>منتج ميزان</span>
+                      </label>
+                    )}
                   </td>
                 </tr>
               )
@@ -368,40 +485,31 @@ export function MenuManagementPage(): React.ReactElement {
         </table>
       </div>
 
-      {/* ── Recipe modal ── */}
       {editingRecipeId && (
         <div className="modal-overlay" onClick={() => setEditingRecipeId(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 16px' }}>تعديل الوصفة</h2>
             {recipeLines.map((line, idx) => (
               <div key={idx} className="page-toolbar" style={{ gap: 6, marginBottom: 8 }}>
-                <select value={line.ingredientId}
-                  onChange={(e) => {
-                    const next = [...recipeLines]
-                    const ing = ingredients.find((i) => i.id === e.target.value)
-                    next[idx] = { ...next[idx]!, ingredientId: e.target.value, unit: ing?.unit ?? line.unit }
-                    setRecipeLines(next)
-                  }}>
+                <select value={line.ingredientId} onChange={(e) => {
+                  const next = [...recipeLines]
+                  const ing = ingredients.find((i) => i.id === e.target.value)
+                  next[idx] = { ...next[idx]!, ingredientId: e.target.value, unit: ing?.unit ?? line.unit }
+                  setRecipeLines(next)
+                }}>
                   {ingredients.map((i) => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
                 </select>
-                <input type="number" value={line.quantity} style={{ width: 80 }}
-                  onChange={(e) => {
-                    const next = [...recipeLines]
-                    next[idx] = { ...next[idx]!, quantity: Number(e.target.value) }
-                    setRecipeLines(next)
-                  }} />
+                <input type="number" value={line.quantity} style={{ width: 80 }} onChange={(e) => {
+                  const next = [...recipeLines]
+                  next[idx] = { ...next[idx]!, quantity: Number(e.target.value) }
+                  setRecipeLines(next)
+                }} />
                 <span style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>{line.unit}</span>
-                <button type="button" className="btn btn--danger btn--sm"
-                  onClick={() => setRecipeLines((l) => l.filter((_, i) => i !== idx))} aria-label="حذف سطر">
-                  <MdClose />
-                </button>
+                <button type="button" className="btn btn--danger btn--sm" onClick={() => setRecipeLines((l) => l.filter((_, i) => i !== idx))} aria-label="حذف سطر"><MdClose /></button>
               </div>
             ))}
             <div className="form-actions">
-              <button type="button" className="btn btn--secondary btn--sm"
-                onClick={() => setRecipeLines((l) => [...l, { ingredientId: ingredients[0]?.id ?? '', quantity: 1, unit: ingredients[0]?.unit ?? 'جرام' }])}>
-                + إضافة مكوّن
-              </button>
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setRecipeLines((l) => [...l, { ingredientId: ingredients[0]?.id ?? '', quantity: 1, unit: ingredients[0]?.unit ?? 'جرام' }])}>+ إضافة مكوّن</button>
               <button type="button" className="btn btn--primary" onClick={() => void saveRecipe()}>حفظ الوصفة</button>
             </div>
           </div>

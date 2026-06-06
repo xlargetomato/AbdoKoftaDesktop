@@ -1777,6 +1777,42 @@ textarea {
   cursor: pointer;
 }
 
+.weighted-pricing-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 14px;
+  padding: 10px;
+  border: 2px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.weighted-pricing-editor h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.weighted-pricing-editor--inline {
+  margin-top: 8px;
+  max-width: 520px;
+}
+
+.weighted-pricing-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(95px, 1fr) minmax(90px, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.weighted-pricing-row input {
+  min-width: 0;
+}
+
+.weighted-pricing-custom {
+  margin-top: 4px;
+}
+
 .pos-stock-alerts {
   display: flex;
   flex-wrap: wrap;
@@ -2367,7 +2403,12 @@ textarea {
 }
 
 .weight-popup__btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-height: 40px;
+  padding: 8px 10px;
   background: #1e1e1e;
   color: #fff;
   border: 1px solid rgba(255,255,255,0.15);
@@ -2382,6 +2423,12 @@ textarea {
     background: var(--color-primary);
     border-color: var(--color-primary);
   }
+}
+
+.weight-popup__empty {
+  margin: 0;
+  color: rgba(255,255,255,0.72);
+  font-size: 0.85rem;
 }
 
 .weight-popup__custom {

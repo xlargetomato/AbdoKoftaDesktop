@@ -14,12 +14,22 @@ export interface MenuItem {
   descriptionAr?: string
   price: number
   isWeighted?: boolean
+  weightedPriceOptions?: WeightedPriceOption[]
+  allowCustomWeight?: boolean
+  customWeightUnitPrice?: number
   imageUrl?: string
   active: boolean
   recipeId: string
   sortOrder: number
   createdAt: number
   updatedAt: number
+}
+
+export interface WeightedPriceOption {
+  id: string
+  label: string
+  weightKg: number
+  price: number
 }
 
 export interface RecipeLine {
