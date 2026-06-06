@@ -14,7 +14,7 @@ export function LoginPage(): React.ReactElement {
   const user = useAuthStore((s) => s.user)
   const setUser = useAuthStore((s) => s.setUser)
   const navigate = useNavigate()
-  const [email, setEmail] = useState('manager@abdokofta.local')
+  const [username, setUsername] = useState('manager')
   const [password, setPassword] = useState('Manager123!')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -28,7 +28,7 @@ export function LoginPage(): React.ReactElement {
     setError('')
     setLoading(true)
     try {
-      const appUser = await loginAndLoadUser(email.trim(), password)
+      const appUser = await loginAndLoadUser(username.trim(), password)
       setUser(appUser)
       navigate(homeFor(appUser), { replace: true })
     } catch (err) {
@@ -46,14 +46,15 @@ export function LoginPage(): React.ReactElement {
         <h1 className="login-card__title">{RESTAURANT_NAME_AR}</h1>
         <form onSubmit={(e) => void handleSubmit(e)} className="login-form">
           <label className="field">
-            <span>البريد الإلكتروني</span>
+            <span>اسم المستخدم</span>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               required
               autoComplete="username"
               dir="ltr"
+              placeholder="manager"
             />
           </label>
           <label className="field">

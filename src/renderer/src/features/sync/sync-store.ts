@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { waitForPendingWrites } from 'firebase/firestore'
+import { getDb } from '@renderer/lib/firebase'
 
 export type SyncStatus = 'online' | 'offline' | 'syncing' | 'synced'
 
@@ -77,8 +79,30 @@ export async function trackWrite<T>(fn: () => Promise<T>): Promise<T> {
   const store = useSyncStore.getState()
   store.markWriteStart()
   try {
-    return await fn()
-  } finally {
+    const result = await fn()
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      void waitForPendingWrites(getDb()).finally(() => {
+        useSyncStore.getState().markWriteDone()
+      })
+    } else {
+      store.markWriteDone()
+    }
+    return result
+  } catch (e) {
     store.markWriteDone()
+    throw e
   }
+}
+
+export function flushPendingWrites(): void {
+  const store = useSyncStore.getState()
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return
+  store.setFirestorePending(true)
+  void waitForPendingWrites(getDb())
+    .catch((e) => {
+      console.warn('[sync] waitForPendingWrites failed', e)
+    })
+    .finally(() => {
+      useSyncStore.getState().setFirestorePending(false)
+    })
 }

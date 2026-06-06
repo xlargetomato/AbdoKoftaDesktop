@@ -1,0 +1,33 @@
+const TERMINAL_KEY = 'abdokofta.terminalId'
+const LAST_ORDER_KEY = 'abdokofta.lastLocalOrderNumber'
+
+function randomTerminalId(): string {
+  const bytes = new Uint8Array(4)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export function getTerminalId(): string {
+  const existing = localStorage.getItem(TERMINAL_KEY)
+  if (existing) return existing
+
+  const terminalId = randomTerminalId()
+  localStorage.setItem(TERMINAL_KEY, terminalId)
+  return terminalId
+}
+
+export function nextLocalOrderReference(): {
+  orderNumber: number
+  orderCode: string
+} {
+  const last = Number(localStorage.getItem(LAST_ORDER_KEY) ?? '0')
+  const base = Date.now() * 100
+  const orderNumber = Math.max(base, last + 1)
+  localStorage.setItem(LAST_ORDER_KEY, String(orderNumber))
+
+  const terminalId = getTerminalId().toUpperCase()
+  return {
+    orderNumber,
+    orderCode: `${terminalId}-${orderNumber}`
+  }
+}

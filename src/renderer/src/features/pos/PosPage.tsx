@@ -14,6 +14,7 @@ import {
   orderSubtotal,
   orderTotal
 } from '@shared/services/order-calculator'
+import { orderReference } from '@shared/services/order-reference'
 
 interface LocalCartLine extends CartLine {
   key: string
@@ -110,7 +111,7 @@ export function PosPage(): React.ReactElement {
       // Clear cart immediately — don't wait for print dialog
       setCart([])
       setOrderNote('')
-      setMessage(`تم إتمام الطلب #${order.orderNumber}`)
+      setMessage(`تم إتمام الطلب #${orderReference(order)}`)
       // Fire print in background — failure won't affect the order
       printReceipt(order, orderItems, settings).catch((e) => {
         console.warn('[print]', e)

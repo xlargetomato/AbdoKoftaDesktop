@@ -10,6 +10,7 @@ import {
 import { listUsersByRole } from '@renderer/features/auth/auth-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
 import { MdArchive, MdUnarchive, MdVisibility, MdPrint, MdFilterList } from 'react-icons/md'
+import { orderReference } from '@shared/services/order-reference'
 
 type ViewMode = 'active' | 'archived'
 
@@ -302,7 +303,7 @@ export function CashierHistoryPage(): React.ReactElement {
                               />
                             </td>
                             <td>
-                              <strong>#{o.orderNumber}</strong>
+                              <strong>#{orderReference(o)}</strong>
                               {o.noteAr && (
                                 <div style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>{o.noteAr}</div>
                               )}
@@ -355,7 +356,7 @@ export function CashierHistoryPage(): React.ReactElement {
         <div className="modal-overlay" onClick={() => setDetails(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="order-details__header">
-              <h2 className="order-details__title">طلب #{details.order.orderNumber}</h2>
+              <h2 className="order-details__title">طلب #{orderReference(details.order)}</h2>
               <button type="button" className="order-details__close" onClick={() => setDetails(null)}>✕</button>
             </div>
             <div className="order-details__meta">

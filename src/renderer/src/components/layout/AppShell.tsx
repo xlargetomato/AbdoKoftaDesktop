@@ -5,8 +5,9 @@ import { signOut, auth } from '@renderer/lib/firebase'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
 import { SyncStatusBadge } from '@renderer/features/sync/SyncStatusBadge'
 import { navLinkEnd, MdLogout, type NavItem } from '@renderer/config/navigation'
-import { MdSystemUpdate, MdClose, MdExpandMore, MdExpandLess } from 'react-icons/md'
+import { MdSystemUpdate, MdClose, MdExpandMore, MdExpandLess, MdLock } from 'react-icons/md'
 import { triggerCheckNow, useUpdateState } from '@renderer/components/UpdateNotification'
+import { usePinStore } from '@renderer/features/auth/pin-store'
 
 interface AppShellProps {
   nav: NavItem[]
@@ -15,12 +16,15 @@ interface AppShellProps {
 
 export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   const displayName = useAuthStore((s) => s.user?.displayName)
+  const userRole = useAuthStore((s) => s.user?.role)
   const navigate = useNavigate()
   const location = useLocation()
   const [currentVersion, setCurrentVersion] = useState<string>('...')
   const [showPopup, setShowPopup] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const updateState = useUpdateState()
+  const pinEnabled = usePinStore((s) => s.pinEnabled)
+  const lockApp = usePinStore((s) => s.lock)
 
   useEffect(() => {
     window.electronAPI?.getAppVersion().then(setCurrentVersion).catch(() => {})
@@ -137,6 +141,19 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
             <span className="app-sidebar__user" title={displayName}>
               {displayName}
             </span>
+          )}
+
+          {/* ── Lock button (cashiers only when PIN enabled) ── */}
+          {pinEnabled && userRole === 'cashier' && (
+            <button
+              type="button"
+              className="btn btn--secondary btn--sm app-sidebar__lock-btn"
+              onClick={lockApp}
+              title="قفل الشاشة"
+            >
+              <MdLock aria-hidden="true" />
+              قفل الشاشة
+            </button>
           )}
 
           {/* ── Update button ── */}

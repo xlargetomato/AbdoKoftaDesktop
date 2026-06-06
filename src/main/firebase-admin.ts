@@ -39,3 +39,7 @@ function getAdminApp(): FirebaseAdminApp {
 export async function deleteAuthUser(uid: string): Promise<void> {
   await getAuth(getAdminApp()).deleteUser(uid)
 }
+
+export async function resetAuthUserPassword(uid: string, newPassword: string): Promise<void> {
+  await getAuth(getAdminApp()).updateUser(uid, { password: newPassword })
+}

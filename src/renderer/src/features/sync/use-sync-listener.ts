@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { onSnapshotsInSync } from 'firebase/firestore'
 import { getDb } from '@renderer/lib/firebase'
-import { useSyncStore } from './sync-store'
+import { flushPendingWrites, useSyncStore } from './sync-store'
 
 /**
  * Wires up network + Firestore sync state.
@@ -27,7 +27,10 @@ export function useSyncListener(): void {
 
   useEffect(() => {
     // Network state
-    const onOnline = (): void => setNetworkOnline(true)
+    const onOnline = (): void => {
+      setNetworkOnline(true)
+      flushPendingWrites()
+    }
     const onOffline = (): void => {
       setNetworkOnline(false)
       setFirestorePending(false)
@@ -36,6 +39,7 @@ export function useSyncListener(): void {
     window.addEventListener('offline', onOffline)
     // Sync with current state (no flash — doesn't touch firestorePending)
     setNetworkOnline(navigator.onLine)
+    if (navigator.onLine) flushPendingWrites()
 
     // Firestore sync — clears the pending flag once all listeners are caught up
     const db = getDb()

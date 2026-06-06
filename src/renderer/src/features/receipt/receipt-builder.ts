@@ -1,4 +1,5 @@
 import type { Order, OrderItem, AppSettings } from '@shared/types'
+import { orderReference } from '@shared/services/order-reference'
 
 export function buildReceiptHtml(
   order: Order,
@@ -37,7 +38,7 @@ export function buildReceiptHtml(
   <h1>${escapeHtml(settings.restaurantNameAr)}</h1>
   ${settings.phoneNumber ? `<p class="restaurant-info">📞 ${escapeHtml(settings.phoneNumber)}</p>` : ''}
   <hr/>
-  <p>طلب رقم: <strong>${order.orderNumber}</strong></p>
+  <p>طلب رقم: <strong>${escapeHtml(orderReference(order))}</strong></p>
   <p>${new Date(order.completedAt ?? order.createdAt).toLocaleString('ar-EG')}</p>
   <p>الكاشير: ${escapeHtml(order.cashierName)}</p>
   <table>

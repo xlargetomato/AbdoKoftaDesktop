@@ -1,5 +1,4 @@
 import {
-  addDoc,
   setDoc,
   getDocs,
   updateDoc,
@@ -19,6 +18,7 @@ import { collections, doc } from '@renderer/lib/firebase'
 import { mapDoc, stripId } from '@renderer/lib/utils/firestore-mapper'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
+import { trackWrite } from '../sync/sync-store'
 
 export async function listIngredients(): Promise<Ingredient[]> {
   const snap = await getDocs(
@@ -93,7 +93,12 @@ export async function recordInventoryTransaction(params: {
     createdBy: params.createdBy,
     createdAt: Date.now()
   }
-  await addDoc(collections.inventoryTransactions(), omitUndefined(tx))
+  await trackWrite(() =>
+    setDoc(
+      doc(collections.inventoryTransactions(), tx.id),
+      omitUndefined(tx as unknown as Record<string, unknown>)
+    )
+  )
   return tx
 }
 

@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('print:receipt', html),
   deleteAuthUser: (uid: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('auth:delete-user', uid),
+  resetAuthUserPassword: (uid: string, newPassword: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('auth:reset-password', uid, newPassword),
 
   // App version & control
   getAppVersion: (): Promise<string> =>

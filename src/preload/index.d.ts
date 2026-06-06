@@ -3,6 +3,7 @@ export interface ElectronAPI {
   printReceipt: (html: string) => Promise<boolean>
   // Auth admin
   deleteAuthUser: (uid: string) => Promise<{ ok: boolean; error?: string }>
+  resetAuthUserPassword: (uid: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>
 
   // App version & control
   getAppVersion: () => Promise<string>

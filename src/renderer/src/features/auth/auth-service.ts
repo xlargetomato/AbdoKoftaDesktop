@@ -4,38 +4,35 @@ import {
   query,
   where,
   getDocs,
-  deleteDoc
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore'
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut
 } from 'firebase/auth'
-import { updateDoc } from 'firebase/firestore'
 import type { AppUser, AppUserCreate, UserRole } from '@shared/types'
+import { usernameToEmail } from '@shared/types/user'
 import { collections, doc, auth } from '@renderer/lib/firebase'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
-import { generateId } from '@renderer/lib/utils/id'
 
 const AUTH_ERRORS: Record<string, string> = {
-  'auth/invalid-credential': 'البريد أو كلمة المرور غير صحيحة',
+  'auth/invalid-credential': 'اسم المستخدم أو كلمة المرور غير صحيحة',
   'auth/wrong-password': 'كلمة المرور غير صحيحة',
-  'auth/user-not-found': 'لا يوجد حساب بهذا البريد',
-  'auth/invalid-email': 'البريد الإلكتروني غير صالح',
+  'auth/user-not-found': 'لا يوجد حساب بهذا المستخدم',
+  'auth/invalid-email': 'اسم المستخدم غير صالح',
   'auth/too-many-requests': 'محاولات كثيرة — انتظر قليلاً ثم حاول مجدداً',
-  'auth/network-request-failed': 'تحقق من الاتصال بالإنترنت'
+  'auth/network-request-failed': 'تحقق من الاتصال بالإنترنت',
+  'auth/email-already-in-use': 'اسم المستخدم مستخدم بالفعل'
 }
 
 function toAuthError(err: unknown): Error {
   const code = (err as { code?: string })?.code
-
   if (code === 'permission-denied') {
-    return new Error(
-      'لا يمكن قراءة ملف المستخدم — شغّل: npm run deploy:rules'
-    )
+    return new Error('لا يمكن قراءة ملف المستخدم — شغّل: npm run deploy:rules')
   }
   if (code && AUTH_ERRORS[code]) return new Error(AUTH_ERRORS[code]!)
-
   if (err instanceof Error) return err
   return new Error('فشل تسجيل الدخول')
 }
@@ -51,9 +48,11 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
     return {
       id: snap.id,
       email: data.email as string,
+      username: (data.username as string) || (data.email as string).split('@')[0],
       displayName: data.displayName as string,
       role: data.role as AppUser['role'],
       active: data.active as boolean,
+      pinHash: data.pinHash as string | undefined,
       createdAt: data.createdAt as number,
       updatedAt: data.updatedAt as number
     }
@@ -63,10 +62,12 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
   }
 }
 
+/** Login with username — converts to email internally */
 export async function loginAndLoadUser(
-  email: string,
+  username: string,
   password: string
 ): Promise<AppUser> {
+  const email = usernameToEmail(username)
   let cred
   try {
     cred = await signInWithEmailAndPassword(auth, email, password)
@@ -76,9 +77,7 @@ export async function loginAndLoadUser(
   const appUser = await fetchAppUser(cred.user.uid)
   if (!appUser || !appUser.active) {
     await signOut(auth)
-    throw new Error(
-      'الحساب غير موجود في قاعدة البيانات — شغّل: npm run seed'
-    )
+    throw new Error('الحساب غير موجود في قاعدة البيانات — شغّل: npm run seed')
   }
   return appUser
 }
@@ -87,15 +86,13 @@ export async function createCashierAccount(
   data: AppUserCreate,
   createdByManagerId: string
 ): Promise<AppUser> {
-  const cred = await createUserWithEmailAndPassword(
-    auth,
-    data.email,
-    data.password
-  )
+  const email = usernameToEmail(data.username)
+  const cred = await createUserWithEmailAndPassword(auth, email, data.password)
   const now = Date.now()
   const appUser: AppUser = {
     id: cred.user.uid,
-    email: data.email,
+    email,
+    username: data.username.toLowerCase().trim(),
     displayName: data.displayName,
     role: data.role,
     active: true,
@@ -115,40 +112,34 @@ export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
   return snap.docs.map((d) => mapDoc<AppUser>(d))
 }
 
-export async function updateUserActive(
-  userId: string,
-  active: boolean
-): Promise<void> {
-  await updateDoc(doc(collections.users(), userId), {
-    active,
-    updatedAt: Date.now()
-  })
+export async function updateUserActive(userId: string, active: boolean): Promise<void> {
+  await updateDoc(doc(collections.users(), userId), { active, updatedAt: Date.now() })
 }
 
 export async function updateUserProfile(
   userId: string,
-  patch: Partial<Pick<AppUser, 'displayName'>>
+  patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash'>>
 ): Promise<void> {
-  await updateDoc(doc(collections.users(), userId), {
-    ...patch,
-    updatedAt: Date.now()
-  })
+  await updateDoc(doc(collections.users(), userId), { ...patch, updatedAt: Date.now() })
+}
+
+export async function resetCashierPassword(
+  userId: string,
+  newPassword: string
+): Promise<void> {
+  if (!navigator.onLine) throw new Error('لا يمكن تغيير كلمة المرور بدون اتصال')
+  const result = await window.electronAPI.resetAuthUserPassword(userId, newPassword)
+  if (!result.ok) throw new Error(result.error ?? 'فشل تغيير كلمة المرور')
 }
 
 export async function deleteCashierAccount(userId: string): Promise<void> {
   const snap = await getDoc(doc(collections.users(), userId))
   if (!snap.exists()) return
   const user = snap.data() as AppUser
-  if (user.role !== 'cashier') {
-    throw new Error('يمكن حذف حسابات الكاشير فقط')
-  }
-
+  if (user.role !== 'cashier') throw new Error('يمكن حذف حسابات الكاشير فقط')
   if (window.electronAPI?.deleteAuthUser) {
     const result = await window.electronAPI.deleteAuthUser(userId)
-    if (!result.ok) {
-      console.warn('[auth] Firebase Auth delete failed:', result.error)
-    }
+    if (!result.ok) console.warn('[auth] Firebase Auth delete failed:', result.error)
   }
-
   await deleteDoc(doc(collections.users(), userId))
 }

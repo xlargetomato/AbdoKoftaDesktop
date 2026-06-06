@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Order, OrderItem } from '@shared/types'
 import { listOrders, getOrderItems, getSettings } from '@renderer/features/orders/order-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
+import { orderReference } from '@shared/services/order-reference'
 
 interface OrderDetails {
   order: Order
@@ -57,7 +58,7 @@ export function OrderHistoryPage(): React.ReactElement {
           <tbody>
             {orders.map((o) => (
               <tr key={o.id}>
-                <td>#{o.orderNumber}</td>
+                <td>#{orderReference(o)}</td>
                 <td>{new Date(o.completedAt ?? o.createdAt).toLocaleString('ar-EG')}</td>
                 <td>{o.cashierName}</td>
                 <td>{o.total.toFixed(2)} {cur}</td>
@@ -94,7 +95,7 @@ export function OrderHistoryPage(): React.ReactElement {
             {/* Header */}
             <div className="order-details__header">
               <h2 className="order-details__title">
-                طلب #{details.order.orderNumber}
+                طلب #{orderReference(details.order)}
               </h2>
               <button
                 type="button"

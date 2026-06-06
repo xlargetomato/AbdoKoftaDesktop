@@ -3,6 +3,7 @@ export type OrderStatus = 'draft' | 'completed' | 'cancelled'
 export interface Order {
   id: string
   orderNumber: number
+  orderCode?: string
   status: OrderStatus
   cashierId: string
   cashierName: string

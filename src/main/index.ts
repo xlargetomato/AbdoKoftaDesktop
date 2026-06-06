@@ -58,7 +58,7 @@ function createWindow(): void {
   }
 }
 
-import { deleteAuthUser } from './firebase-admin'
+import { deleteAuthUser, resetAuthUserPassword } from './firebase-admin'
 import { initAutoUpdater } from './auto-updater'
 
 app.whenReady().then(() => {
@@ -122,6 +122,16 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:delete-user', async (_, uid: string) => {
     try {
       await deleteAuthUser(uid)
+      return { ok: true as const }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return { ok: false as const, error: message }
+    }
+  })
+
+  ipcMain.handle('auth:reset-password', async (_, uid: string, newPassword: string) => {
+    try {
+      await resetAuthUserPassword(uid, newPassword)
       return { ok: true as const }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)

@@ -1,15 +1,13 @@
 import {
-  addDoc,
   getDocs,
   updateDoc,
   query,
   orderBy,
   where,
   writeBatch,
-  getDoc,
-  runTransaction
+  getDoc
 } from 'firebase/firestore'
-import type { Order, OrderItem, Payment } from '@shared/types'
+import type { InventoryTransaction, Order, OrderItem, Payment } from '@shared/types'
 import {
   recipeDeductionLines,
   mergeDeductionLines
@@ -24,11 +22,11 @@ import { trackWrite } from '../sync/sync-store'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
-import { recordInventoryTransaction } from '../inventory/inventory-service'
 import { getRecipe } from '../menu/menu-service'
 import { SETTINGS_DOC_ID } from '@shared/schema/firestore-schema'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
+import { nextLocalOrderReference } from '@renderer/lib/offline/order-number'
 
 export interface CartLine {
   menuItemId: string
@@ -38,26 +36,6 @@ export interface CartLine {
   noteAr?: string
 }
 
-async function nextOrderNumber(): Promise<number> {
-  const db = getDb()
-  const settingsRef = doc(collections.settings(), SETTINGS_DOC_ID)
-  return runTransaction(db, async (tx) => {
-    const snap = await tx.get(settingsRef)
-    const settings = snap.exists()
-      ? (snap.data() as AppSettings)
-      : ({
-          nextOrderNumber: 1
-        } as AppSettings)
-    const num = settings.nextOrderNumber ?? 1
-    tx.set(
-      settingsRef,
-      { nextOrderNumber: num + 1, updatedAt: Date.now() },
-      { merge: true }
-    )
-    return num
-  })
-}
-
 export async function getSettings(): Promise<AppSettings> {
   const snap = await getDoc(doc(collections.settings(), SETTINGS_DOC_ID))
   if (!snap.exists()) {
@@ -65,6 +43,8 @@ export async function getSettings(): Promise<AppSettings> {
       id: SETTINGS_DOC_ID,
       restaurantNameAr: RESTAURANT_NAME_AR,
       currencySymbol: 'ج.م',
+      pinEnabled: false,
+      autoLockMinutes: 5,
       nextOrderNumber: 1,
       updatedAt: Date.now()
     }
@@ -74,7 +54,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(
-  patch: Partial<Pick<AppSettings, 'restaurantNameAr' | 'currencySymbol' | 'receiptFooterAr' | 'phoneNumber' | 'primaryColor'>>
+  patch: Partial<Pick<AppSettings, 'restaurantNameAr' | 'currencySymbol' | 'receiptFooterAr' | 'phoneNumber' | 'primaryColor' | 'pinEnabled' | 'autoLockMinutes'>>
 ): Promise<void> {
   await updateDoc(
     doc(collections.settings(), SETTINGS_DOC_ID),
@@ -101,13 +81,14 @@ async function _completeOrder(params: {
 }): Promise<Order> {
   const subtotal = orderSubtotal(params.lines)
   const total = orderTotal(subtotal)
-  const orderNumber = await nextOrderNumber()
+  const { orderNumber, orderCode } = nextLocalOrderReference()
   const now = Date.now()
   const orderId = generateId()
 
   const order: Order = {
     id: orderId,
     orderNumber,
+    orderCode,
     status: 'completed',
     cashierId: params.cashierId,
     cashierName: params.cashierName,
@@ -120,7 +101,10 @@ async function _completeOrder(params: {
   }
 
   const batch = writeBatch(getDb())
-  batch.set(doc(collections.orders(), orderId), omitUndefined(order))
+  batch.set(
+    doc(collections.orders(), orderId),
+    omitUndefined(order as unknown as Record<string, unknown>)
+  )
 
   const orderItems: OrderItem[] = params.lines.map((line) => {
     const itemId = generateId()
@@ -134,7 +118,10 @@ async function _completeOrder(params: {
       lineTotal: lineTotal(line.unitPrice, line.quantity),
       noteAr: line.noteAr
     }
-    batch.set(doc(collections.orderItems(), itemId), omitUndefined(oi))
+    batch.set(
+      doc(collections.orderItems(), itemId),
+      omitUndefined(oi as unknown as Record<string, unknown>)
+    )
     return oi
   })
 
@@ -147,18 +134,30 @@ async function _completeOrder(params: {
   }
   batch.set(doc(collections.payments(), payment.id), payment)
 
-  await batch.commit()
+  const inventoryTransactions = await inventoryTransactionsForOrder(
+    orderId,
+    orderItems,
+    params.cashierId,
+    now
+  )
+  for (const tx of inventoryTransactions) {
+    batch.set(
+      doc(collections.inventoryTransactions(), tx.id),
+      omitUndefined(tx as unknown as Record<string, unknown>)
+    )
+  }
 
-  await deductInventoryForOrder(orderId, orderItems, params.cashierId)
+  await batch.commit()
 
   return order
 }
 
-async function deductInventoryForOrder(
+async function inventoryTransactionsForOrder(
   orderId: string,
   items: OrderItem[],
-  createdBy: string
-): Promise<void> {
+  createdBy: string,
+  createdAt: number
+): Promise<InventoryTransaction[]> {
   const allLines: Array<{
     ingredientId: string
     quantity: number
@@ -177,8 +176,8 @@ async function deductInventoryForOrder(
   }
 
   const merged = mergeDeductionLines(allLines)
-  for (const line of merged) {
-    await recordInventoryTransaction({
+  return merged.map((line) => ({
+      id: generateId(),
       ingredientId: line.ingredientId,
       type: 'sale',
       quantity: line.quantity,
@@ -186,9 +185,9 @@ async function deductInventoryForOrder(
       referenceType: 'order',
       referenceId: orderId,
       noteAr: 'خصم تلقائي من الطلب',
-      createdBy
-    })
-  }
+      createdBy,
+      createdAt
+    }))
 }
 
 export async function listOrders(limit = 50): Promise<Order[]> {

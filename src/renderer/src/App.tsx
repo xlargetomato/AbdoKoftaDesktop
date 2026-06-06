@@ -7,6 +7,8 @@ import { ProtectedRoute } from '@renderer/features/auth/ProtectedRoute'
 import { AppShell } from '@renderer/components/layout/AppShell'
 import { PageLoader } from '@renderer/components/PageLoader'
 import { UpdateNotification, useUpdaterBootstrap } from '@renderer/components/UpdateNotification'
+import { PinLockScreen } from '@renderer/components/PinLockScreen'
+import { usePinBootstrap } from '@renderer/features/auth/use-pin-bootstrap'
 import { applyThemeColor } from '@renderer/features/theme/theme-store'
 import { getSettings } from '@renderer/features/orders/order-service'
 import { CASHIER_NAV, MANAGER_NAV } from '@renderer/config/navigation'
@@ -97,8 +99,8 @@ export default function App(): React.ReactElement {
   useAuthBootstrap()
   useSyncListener()
   useUpdaterBootstrap()
+  usePinBootstrap()
 
-  // Apply saved theme color on startup
   useEffect(() => {
     void getSettings().then((s) => {
       if (s.primaryColor) applyThemeColor(s.primaryColor)
@@ -107,6 +109,7 @@ export default function App(): React.ReactElement {
 
   return (
     <HashRouter>
+      <PinLockScreen />
       <UpdateNotification />
       <Routes>
         <Route
