@@ -1,6 +1,6 @@
 {
-  "name": "abdokofta-pos",
-  "version": "2.1.0",
+  "name": "shift-pos",
+  "version": "2.1.2",
   "description": "Restaurant Management and POS - Arabic RTL",
   "main": "./out/main/index.js",
   "private": true,
@@ -33,7 +33,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
     "dotenv": "^16.5.0",
-    "electron": "42.3.3",
+    "electron": "^42.3.3",
     "electron-builder": "26.8.1",
     "electron-vite": "^3.1.0",
     "tsx": "^4.19.4",
@@ -41,9 +41,9 @@
     "vite": "^6.3.5"
   },
   "build": {
-    "appId": "com.abdokofta.pos",
-    "productName": "Abdo Kofta POS",
-    "copyright": "Abdo Kofta",
+    "appId": "com.shift.pos",
+    "productName": "SHIFT POS",
+    "copyright": "SHIFT",
     "icon": "build/icon.ico",
     "publish": {
       "provider": "github",
@@ -88,7 +88,7 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Abdo Kofta POS",
+      "shortcutName": "SHIFT POS",
       "installerIcon": "build/installerIcon.ico",
       "uninstallerIcon": "build/installerIcon.ico",
       "installerSidebar": "build/installerSidebar.bmp",
