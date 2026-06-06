@@ -4,6 +4,22 @@ import { getDb } from '@renderer/lib/firebase'
 
 export type SyncStatus = 'online' | 'offline' | 'syncing' | 'synced'
 
+const DURABLE_PENDING_KEY = 'abdokofta.sync.pendingWrites'
+
+function readDurablePending(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(DURABLE_PENDING_KEY) === '1'
+}
+
+function writeDurablePending(pending: boolean): void {
+  if (typeof window === 'undefined') return
+  if (pending) {
+    window.localStorage.setItem(DURABLE_PENDING_KEY, '1')
+  } else {
+    window.localStorage.removeItem(DURABLE_PENDING_KEY)
+  }
+}
+
 interface SyncState {
   networkOnline: boolean
   firestorePending: boolean
@@ -29,12 +45,11 @@ function deriveStatus(
 
 export const useSyncStore = create<SyncState>((set, get) => ({
   networkOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-  firestorePending: false,
+  firestorePending: readDurablePending(),
   pendingWrites: 0,
-  // Derived correctly on init (no hardcoded 'synced')
   status: deriveStatus(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
-    false
+    readDurablePending()
   ),
 
   setNetworkOnline: (online) => {
@@ -46,6 +61,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     const { networkOnline, pendingWrites } = get()
     // Don't clear pending if there are still in-flight writes
     const effectivePending = pending || pendingWrites > 0
+    writeDurablePending(effectivePending)
     set({
       firestorePending: effectivePending,
       status: deriveStatus(networkOnline, effectivePending)
@@ -55,6 +71,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   markWriteStart: () => {
     const { networkOnline } = get()
     const pendingWrites = get().pendingWrites + 1
+    writeDurablePending(true)
     set({
       pendingWrites,
       firestorePending: true,
@@ -65,7 +82,8 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   markWriteDone: () => {
     const { networkOnline } = get()
     const pendingWrites = Math.max(0, get().pendingWrites - 1)
-    const firestorePending = pendingWrites > 0
+    const firestorePending = pendingWrites > 0 || (!networkOnline && readDurablePending())
+    if (!firestorePending) writeDurablePending(false)
     set({
       pendingWrites,
       firestorePending,

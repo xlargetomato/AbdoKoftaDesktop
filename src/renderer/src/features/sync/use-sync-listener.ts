@@ -33,7 +33,6 @@ export function useSyncListener(): void {
     }
     const onOffline = (): void => {
       setNetworkOnline(false)
-      setFirestorePending(false)
     }
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)

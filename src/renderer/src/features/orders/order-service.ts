@@ -8,7 +8,7 @@ import {
   getDoc,
   deleteField
 } from 'firebase/firestore'
-import type { InventoryTransaction, Order, OrderItem, Payment } from '@shared/types'
+import type { CashDrawerTransaction, InventoryTransaction, Order, OrderItem, Payment } from '@shared/types'
 import {
   recipeDeductionLines,
   mergeDeductionLines
@@ -29,7 +29,6 @@ import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
 import { nextLocalOrderReference } from '@renderer/lib/offline/order-number'
 import { ensureOpenShift } from '../shifts/shift-service'
-import { recordCashDrawerTransaction } from '../cash/cash-service'
 
 export interface CartLine {
   menuItemId: string
@@ -168,16 +167,21 @@ async function _completeOrder(params: {
     )
   }
 
-  await batch.commit()
-
-  await recordCashDrawerTransaction({
+  const drawerTransaction: CashDrawerTransaction = {
+    id: generateId(),
     type: 'sale',
     amount: total,
     shiftId: shift.id,
     orderId,
-    createdBy: params.cashierId
-  })
+    createdBy: params.cashierId,
+    createdAt: now
+  }
+  batch.set(
+    doc(collections.cashDrawerTransactions(), drawerTransaction.id),
+    omitUndefined(drawerTransaction as unknown as Record<string, unknown>)
+  )
 
+  await batch.commit()
   return order
 }
 
@@ -207,18 +211,18 @@ async function inventoryTransactionsForOrder(
 
   const merged = mergeDeductionLines(allLines)
   return merged.map((line) => ({
-      id: generateId(),
-      ingredientId: line.ingredientId,
-      type: 'sale',
-      quantity: line.quantity,
+    id: generateId(),
+    ingredientId: line.ingredientId,
+    type: 'sale',
+    quantity: line.quantity,
     unit: line.unit,
     referenceType: 'order',
     referenceId: orderId,
     shiftId,
     noteAr: 'خصم تلقائي من الطلب',
-      createdBy,
-      createdAt
-    }))
+    createdBy,
+    createdAt
+  }))
 }
 
 export async function cancelOrder(params: {
@@ -227,61 +231,74 @@ export async function cancelOrder(params: {
   reasonAr?: string
   inventoryMode: 'return' | 'waste'
 }): Promise<void> {
-  const orderSnap = await getDoc(doc(collections.orders(), params.orderId))
-  if (!orderSnap.exists()) return
-  const order = mapDoc<Order>(orderSnap)
+  await trackWrite(async () => {
+    const orderSnap = await getDoc(doc(collections.orders(), params.orderId))
+    if (!orderSnap.exists()) return
+    const order = mapDoc<Order>(orderSnap)
+    const now = Date.now()
+    const batch = writeBatch(getDb())
 
-  await updateDoc(doc(collections.orders(), params.orderId), {
-    status: 'cancelled',
-    cancelledAt: Date.now(),
-    cancelledBy: params.cancelledBy,
-    cancelReasonAr: params.reasonAr,
-    cancelInventoryMode: params.inventoryMode,
-    updatedAt: Date.now()
+    batch.update(doc(collections.orders(), params.orderId), {
+      status: 'cancelled',
+      cancelledAt: now,
+      cancelledBy: params.cancelledBy,
+      cancelReasonAr: params.reasonAr,
+      cancelInventoryMode: params.inventoryMode,
+      updatedAt: now
+    })
+
+    const drawerTransaction: CashDrawerTransaction = {
+      id: generateId(),
+      type: 'sale',
+      amount: -order.total,
+      shiftId: order.shiftId,
+      orderId: order.id,
+      noteAr: params.reasonAr || 'إلغاء طلب',
+      createdBy: params.cancelledBy,
+      createdAt: now
+    }
+    batch.set(
+      doc(collections.cashDrawerTransactions(), drawerTransaction.id),
+      omitUndefined(drawerTransaction as unknown as Record<string, unknown>)
+    )
+
+    if (params.inventoryMode === 'return') {
+      const reversals = await inventoryReversalsForOrder(order.id, params.cancelledBy, now)
+      for (const reversal of reversals) {
+        batch.set(
+          doc(collections.inventoryTransactions(), reversal.id),
+          omitUndefined(reversal as unknown as Record<string, unknown>)
+        )
+      }
+    }
+
+    await batch.commit()
   })
-
-  await recordCashDrawerTransaction({
-    type: 'sale',
-    amount: -order.total,
-    shiftId: order.shiftId,
-    orderId: order.id,
-    noteAr: params.reasonAr || 'إلغاء طلب',
-    createdBy: params.cancelledBy
-  })
-
-  if (params.inventoryMode === 'return') {
-    await reverseInventoryForOrder(order.id, params.cancelledBy)
-  }
 }
 
-async function reverseInventoryForOrder(orderId: string, createdBy: string): Promise<void> {
+async function inventoryReversalsForOrder(
+  orderId: string,
+  createdBy: string,
+  createdAt: number
+): Promise<InventoryTransaction[]> {
   const snap = await getDocs(query(collections.inventoryTransactions(), where('referenceId', '==', orderId)))
   const saleTransactions = snap.docs
     .map((d) => mapDoc<InventoryTransaction>(d))
     .filter((tx) => tx.type === 'sale')
 
-  const batch = writeBatch(getDb())
-  const now = Date.now()
-  for (const tx of saleTransactions) {
-    const reversal: InventoryTransaction = {
-      id: generateId(),
-      ingredientId: tx.ingredientId,
-      type: 'sale_reversal',
-      quantity: -tx.quantity,
-      unit: tx.unit,
-      referenceType: 'order',
-      referenceId: orderId,
-      shiftId: tx.shiftId,
-      noteAr: 'عكس خصم مخزون لطلب ملغي',
-      createdBy,
-      createdAt: now
-    }
-    batch.set(
-      doc(collections.inventoryTransactions(), reversal.id),
-      omitUndefined(reversal as unknown as Record<string, unknown>)
-    )
-  }
-  await batch.commit()
+  return saleTransactions.map((tx) => ({
+    id: generateId(),
+    ingredientId: tx.ingredientId,
+    type: 'sale_reversal',
+    quantity: -tx.quantity,
+    unit: tx.unit,
+    referenceType: 'order',
+    referenceId: orderId,
+    shiftId: tx.shiftId,
+    noteAr: 'عكس خصم مخزون لطلب ملغي',
+    createdBy,
+    createdAt
+  }))
 }
 
 export async function listOrders(limit = 50): Promise<Order[]> {
