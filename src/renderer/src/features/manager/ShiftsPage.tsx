@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Shift } from '@shared/types'
 import {
   archiveShifts,
@@ -15,31 +15,34 @@ type ShiftViewMode = 'active' | 'archived'
 
 export function ShiftsPage(): React.ReactElement {
   const user = useAuthStore((s) => s.user)!
-  const [shifts, setShifts] = useState<Shift[]>([])
+  const [allShifts, setAllShifts] = useState<Shift[]>([])
   const [viewMode, setViewMode] = useState<ShiftViewMode>('active')
   const [selected, setSelected] = useState<ShiftSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
-  const [counts, setCounts] = useState({ active: 0, archived: 0 })
 
   const load = useCallback(async () => {
     setLoading(true)
-    const allShifts = await listShifts(true)
-    const activeShifts = allShifts.filter((s) => !s.archived)
-    const archivedShifts = allShifts.filter((s) => !!s.archived)
-    const data = viewMode === 'archived' ? archivedShifts : activeShifts
-    setCounts({ active: activeShifts.length, archived: archivedShifts.length })
-    setShifts(data)
+    setAllShifts(await listShifts(true))
     setLoading(false)
-
-    if (selected && !data.some((s) => s.id === selected.shift.id)) {
-      setSelected(null)
-    } else if (!selected && data[0]) {
-      setSelected(await getShiftSummary(data[0]))
-    }
-  }, [selected, viewMode])
+  }, [])
 
   useEffect(() => { void load() }, [load])
+
+  const counts = useMemo(() => ({
+    active: allShifts.filter((s) => !s.archived).length,
+    archived: allShifts.filter((s) => !!s.archived).length
+  }), [allShifts])
+
+  const shifts = useMemo(() => (
+    allShifts.filter((shift) => viewMode === 'archived' ? !!shift.archived : !shift.archived)
+  ), [allShifts, viewMode])
+
+  useEffect(() => {
+    if (selected && !shifts.some((shift) => shift.id === selected.shift.id)) {
+      setSelected(null)
+    }
+  }, [selected, shifts])
 
   async function openSummary(shift: Shift): Promise<void> {
     setSelected(await getShiftSummary(shift))
