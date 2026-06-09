@@ -8,7 +8,6 @@ import {
   updateDoc
 } from 'firebase/firestore'
 import {
-  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut
 } from 'firebase/auth'
@@ -104,6 +103,25 @@ function rememberPendingLocalAuthUser(user: AppUser, password: string): void {
     updatedAt: Date.now()
   })
   writePendingLocalAuthUsers(pending)
+}
+
+async function cacheLocalUserWithPassword(user: AppUser, password: string): Promise<void> {
+  await cacheOfflineLogin(user, password)
+  rememberPendingLocalAuthUser(user, password)
+}
+
+function canFallbackToLocal(err: unknown): boolean {
+  const code = (err as { code?: string })?.code ?? ''
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
+  return (
+    isOfflineError(err) ||
+    code.includes('permission-denied') ||
+    code.includes('not-found') ||
+    code.includes('user-not-found') ||
+    message.includes('no user record') ||
+    message.includes('permission') ||
+    message.includes('missing or insufficient permissions')
+  )
 }
 
 export function getPendingLocalAuthUsers(): PendingLocalAuthUser[] {
@@ -222,7 +240,7 @@ export async function loginAndLoadUser(
   try {
     cred = await signInWithEmailAndPassword(auth, email, password)
   } catch (e) {
-    if (isOfflineError(e)) {
+    if (canFallbackToLocal(e)) {
       const offlineUser = await tryOfflineLogin(username, password)
       if (offlineUser) return offlineUser
     }
@@ -243,30 +261,9 @@ export async function createCashierAccount(
 ): Promise<AppUser> {
   const username = data.username.toLowerCase().trim()
   const email = usernameToEmail(username)
-  if (isAppOffline()) {
-    const now = Date.now()
-    const appUser: AppUser = {
-      id: `local_${username}`,
-      email,
-      username,
-      displayName: data.displayName,
-      cashierCode: data.cashierCode?.toUpperCase(),
-      role: data.role,
-      active: true,
-      createdAt: now,
-      updatedAt: now
-    }
-    await cacheOfflineLogin(appUser, data.password)
-    rememberPendingLocalAuthUser(appUser, data.password)
-    return appUser
-  }
-  if (data.role === 'cashier' && data.cashierCode) {
-    await assertCashierCodeAvailable(data.cashierCode)
-  }
-  const cred = await createUserWithEmailAndPassword(auth, email, data.password)
   const now = Date.now()
   const appUser: AppUser = {
-    id: cred.user.uid,
+    id: `local_${username}`,
     email,
     username,
     displayName: data.displayName,
@@ -276,13 +273,21 @@ export async function createCashierAccount(
     createdAt: now,
     updatedAt: now
   }
-  await setDoc(doc(collections.users(), cred.user.uid), {
+
+  if (!isAppOffline() && data.role === 'cashier' && data.cashierCode) {
+    try {
+      await assertCashierCodeAvailable(data.cashierCode)
+    } catch (e) {
+      if (!canFallbackToLocal(e)) throw e
+    }
+  }
+
+  await cacheLocalUserWithPassword({
     ...appUser,
     createdBy: createdByManagerId
-  })
+  } as AppUser, data.password)
   return appUser
 }
-
 async function assertCashierCodeAvailable(
   cashierCode: string,
   exceptUserId?: string
@@ -315,48 +320,80 @@ export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
 }
 
 export async function updateUserActive(userId: string, active: boolean): Promise<void> {
-  if (isAppOffline()) {
-    const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
-    if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, active, updatedAt: Date.now() }])
-    return
+  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+  if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, active, updatedAt: Date.now() }])
+  if (isAppOffline() || userId.startsWith('local_')) return
+
+  try {
+    await updateDoc(doc(collections.users(), userId), { active, updatedAt: Date.now() })
+  } catch (e) {
+    if (!canFallbackToLocal(e)) throw e
   }
-  await updateDoc(doc(collections.users(), userId), { active, updatedAt: Date.now() })
 }
 
 export async function updateUserProfile(
   userId: string,
   patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash' | 'cashierCode'>>
 ): Promise<void> {
-  if (isAppOffline()) {
-    const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
-    if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, ...patch, updatedAt: Date.now() }])
-    return
+  const normalizedPatch = {
+    ...patch,
+    cashierCode: patch.cashierCode?.toUpperCase()
   }
-  if (patch.cashierCode) {
-    await assertCashierCodeAvailable(patch.cashierCode, userId)
-    patch.cashierCode = patch.cashierCode.toUpperCase()
+  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+  if (cached) await cacheDocs(COLLECTIONS.users, [{ ...cached, ...normalizedPatch, updatedAt: Date.now() }])
+  if (isAppOffline() || userId.startsWith('local_')) return
+
+  try {
+    if (normalizedPatch.cashierCode) {
+      await assertCashierCodeAvailable(normalizedPatch.cashierCode, userId)
+    }
+    await updateDoc(doc(collections.users(), userId), { ...normalizedPatch, updatedAt: Date.now() })
+  } catch (e) {
+    if (!canFallbackToLocal(e)) throw e
   }
-  await updateDoc(doc(collections.users(), userId), { ...patch, updatedAt: Date.now() })
 }
 
 export async function resetCashierPassword(
   userId: string,
   newPassword: string
 ): Promise<void> {
-  if (isAppOffline()) throw new Error('لا يمكن تغيير كلمة المرور بدون اتصال')
-  const result = await window.electronAPI.resetAuthUserPassword(userId, newPassword)
-  if (!result.ok) throw new Error(result.error ?? 'فشل تغيير كلمة المرور')
-}
+  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+  if (cached) await cacheLocalUserWithPassword({ ...cached, updatedAt: Date.now() }, newPassword)
+  if (isAppOffline() || userId.startsWith('local_')) return
 
+  const result = await window.electronAPI.resetAuthUserPassword(userId, newPassword)
+  if (!result.ok) {
+    const err = new Error(result.error ?? 'Failed to reset password')
+    if (!canFallbackToLocal(err)) throw err
+  }
+}
 export async function deleteCashierAccount(userId: string): Promise<void> {
-  if (isAppOffline()) throw new Error('لا يمكن حذف حساب أثناء عدم الاتصال')
-  const snap = await getDoc(doc(collections.users(), userId))
-  if (!snap.exists()) return
-  const user = snap.data() as AppUser
-  if (user.role !== 'cashier') throw new Error('يمكن حذف حسابات الكاشير فقط')
+  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
+  if (cached) {
+    await cacheDocs(COLLECTIONS.users, [{ ...cached, active: false, updatedAt: Date.now() }])
+  }
+  if (isAppOffline() || userId.startsWith('local_')) return
+
+  let user: AppUser | null = cached
+  try {
+    const snap = await getDoc(doc(collections.users(), userId))
+    if (snap.exists()) user = snap.data() as AppUser
+  } catch (e) {
+    if (!canFallbackToLocal(e)) throw e
+  }
+  if (user && user.role !== 'cashier') throw new Error('يمكن حذف حسابات الكاشير فقط')
+
   if (window.electronAPI?.deleteAuthUser) {
     const result = await window.electronAPI.deleteAuthUser(userId)
-    if (!result.ok) console.warn('[auth] Firebase Auth delete failed:', result.error)
+    if (!result.ok) {
+      const err = new Error(result.error ?? 'Failed to delete auth user')
+      if (!canFallbackToLocal(err)) console.warn('[auth] Firebase Auth delete failed:', result.error)
+    }
   }
-  await deleteDoc(doc(collections.users(), userId))
+
+  try {
+    await deleteDoc(doc(collections.users(), userId))
+  } catch (e) {
+    if (!canFallbackToLocal(e)) throw e
+  }
 }

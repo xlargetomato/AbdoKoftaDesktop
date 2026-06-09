@@ -61,7 +61,10 @@ export async function ensureAuthUser(params: {
       disabled: false
     })
   } catch (e) {
-    if ((e as { code?: string }).code !== 'auth/user-not-found') throw e
+    const code = (e as { code?: string }).code
+    const message = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase()
+    const missing = code === 'auth/user-not-found' || message.includes('no user record')
+    if (!missing) throw e
     await auth.createUser({
       uid: params.uid,
       email: params.email,
