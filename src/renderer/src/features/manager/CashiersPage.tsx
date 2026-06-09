@@ -40,10 +40,6 @@ export function CashiersPage(): React.ReactElement {
     e.preventDefault()
     setError('')
     setMessage('')
-    if (!navigator.onLine) {
-      setError('لا يمكن إنشاء حساب بدون اتصال')
-      return
-    }
     if (form.username.includes('@') || form.username.includes(' ')) {
       setError('اسم المستخدم لا يمكن أن يحتوي على @ أو مسافات')
       return

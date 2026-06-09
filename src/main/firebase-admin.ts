@@ -8,6 +8,7 @@ import {
   type App as FirebaseAdminApp
 } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
+import { getFirestore } from 'firebase-admin/firestore'
 
 let adminApp: FirebaseAdminApp | null = null
 
@@ -42,4 +43,51 @@ export async function deleteAuthUser(uid: string): Promise<void> {
 
 export async function resetAuthUserPassword(uid: string, newPassword: string): Promise<void> {
   await getAuth(getAdminApp()).updateUser(uid, { password: newPassword })
+}
+
+export async function ensureAuthUser(params: {
+  uid: string
+  email: string
+  password: string
+  displayName: string
+}): Promise<void> {
+  const auth = getAuth(getAdminApp())
+  try {
+    await auth.getUser(params.uid)
+    await auth.updateUser(params.uid, {
+      email: params.email,
+      password: params.password,
+      displayName: params.displayName,
+      disabled: false
+    })
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'auth/user-not-found') throw e
+    await auth.createUser({
+      uid: params.uid,
+      email: params.email,
+      password: params.password,
+      displayName: params.displayName,
+      disabled: false
+    })
+  }
+}
+
+export async function readAdminDocument(
+  collectionName: string,
+  documentId: string
+): Promise<unknown | null> {
+  const snap = await getFirestore(getAdminApp()).collection(collectionName).doc(documentId).get()
+  if (!snap.exists) return null
+  return { id: snap.id, ...snap.data() }
+}
+
+export async function writeAdminDocument(
+  collectionName: string,
+  documentId: string,
+  data: unknown
+): Promise<void> {
+  await getFirestore(getAdminApp())
+    .collection(collectionName)
+    .doc(documentId)
+    .set(data as Record<string, unknown>, { merge: true })
 }

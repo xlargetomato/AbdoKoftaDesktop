@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { onSnapshotsInSync } from 'firebase/firestore'
 import { firebaseConfig, getDb } from '@renderer/lib/firebase'
 import { flushPendingWrites, useSyncStore } from './sync-store'
+import { reconcileLocalCacheToFirestore } from './reconcile-service'
 
 async function probeBackend(): Promise<boolean> {
   if (!navigator.onLine) return false
@@ -32,6 +33,8 @@ export function useSyncListener(): void {
   useEffect(() => {
     let disposed = false
     let unsubSync: (() => void) | null = null
+    let lastBackendOnline = false
+    let initialReconcileDone = false
 
     function stopFirestoreSyncListener(): void {
       unsubSync?.()
@@ -50,10 +53,18 @@ export function useSyncListener(): void {
     async function refreshBackendStatus(): Promise<void> {
       const online = await probeBackend()
       if (disposed) return
+      const shouldReconcile = online && (!lastBackendOnline || !initialReconcileDone)
       setBackendOnline(online)
+      lastBackendOnline = online
       if (online) {
         startFirestoreSyncListener()
         flushPendingWrites()
+        if (shouldReconcile) {
+          initialReconcileDone = true
+          void reconcileLocalCacheToFirestore().catch((e) => {
+            console.warn('[sync] reconcile failed', e)
+          })
+        }
       } else {
         stopFirestoreSyncListener()
       }
@@ -66,6 +77,7 @@ export function useSyncListener(): void {
     const onOffline = (): void => {
       setBrowserOnline(false)
       setBackendOnline(false)
+      lastBackendOnline = false
       stopFirestoreSyncListener()
     }
 

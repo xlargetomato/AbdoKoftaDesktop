@@ -4,6 +4,21 @@ export interface ElectronAPI {
   // Auth admin
   deleteAuthUser: (uid: string) => Promise<{ ok: boolean; error?: string }>
   resetAuthUserPassword: (uid: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>
+  ensureAuthUser: (params: {
+    uid: string
+    email: string
+    password: string
+    displayName: string
+  }) => Promise<{ ok: boolean; error?: string }>
+  getAdminDocument: (
+    collectionName: string,
+    documentId: string
+  ) => Promise<{ ok: boolean; data?: unknown | null; error?: string }>
+  setAdminDocument: (
+    collectionName: string,
+    documentId: string,
+    data: unknown
+  ) => Promise<{ ok: boolean; error?: string }>
 
   // App version & control
   getAppVersion: () => Promise<string>

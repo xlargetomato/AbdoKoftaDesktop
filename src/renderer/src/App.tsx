@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { HashRouter, Navigate, Route, Routes, Outlet } from 'react-router-dom'
 import { useAuthBootstrap } from '@renderer/features/auth/use-auth-bootstrap'
 import { useSyncListener } from '@renderer/features/sync/use-sync-listener'
+import { SyncProgressNotification } from '@renderer/features/sync/SyncProgressNotification'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
 import { ProtectedRoute } from '@renderer/features/auth/ProtectedRoute'
 import { AppShell } from '@renderer/components/layout/AppShell'
@@ -126,6 +127,7 @@ export default function App(): React.ReactElement {
     <HashRouter>
       <PinLockScreen />
       <UpdateNotification />
+      <SyncProgressNotification />
       <Routes>
         <Route
           path="/login"

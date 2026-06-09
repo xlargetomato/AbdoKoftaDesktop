@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:delete-user', uid),
   resetAuthUserPassword: (uid: string, newPassword: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('auth:reset-password', uid, newPassword),
+  ensureAuthUser: (params: { uid: string; email: string; password: string; displayName: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('auth:ensure-user', params),
+  getAdminDocument: (collectionName: string, documentId: string): Promise<{ ok: boolean; data?: unknown | null; error?: string }> =>
+    ipcRenderer.invoke('admin:get-document', collectionName, documentId),
+  setAdminDocument: (collectionName: string, documentId: string, data: unknown): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('admin:set-document', collectionName, documentId, data),
 
   // App version & control
   getAppVersion: (): Promise<string> =>

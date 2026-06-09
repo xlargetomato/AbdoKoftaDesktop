@@ -16,11 +16,15 @@ const CLASS: Record<SyncStatus, string> = {
 
 export function SyncStatusBadge(): React.ReactElement {
   const status = useSyncStore((s) => s.status)
+  const progress = useSyncStore((s) => s.syncProgress)
+  const message = useSyncStore((s) => s.syncMessage)
+  const progressLabel = progress == null ? null : `${Math.round(progress)}%`
+  const label = progressLabel ? `${message ?? LABELS[status]} ${progressLabel}` : LABELS[status]
 
   return (
-    <span className={`sync-badge ${CLASS[status]}`} title={LABELS[status]}>
+    <span className={`sync-badge ${CLASS[status]}`} title={label}>
       <span className="sync-badge__dot" />
-      {LABELS[status]}
+      {label}
     </span>
   )
 }

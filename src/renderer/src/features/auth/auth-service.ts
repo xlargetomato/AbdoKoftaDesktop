@@ -26,11 +26,21 @@ import {
 } from '@renderer/lib/offline/sqlite-cache'
 
 const OFFLINE_AUTH_KEY = 'abdokofta.offlineAuth.v1'
+const PENDING_LOCAL_AUTH_KEY = 'abdokofta.pendingLocalAuth.v1'
 
 interface CachedAuthUser {
   username: string
   passwordHash: string
   user: AppUser
+  updatedAt: number
+}
+
+export interface PendingLocalAuthUser {
+  uid: string
+  email: string
+  username: string
+  password: string
+  displayName: string
   updatedAt: number
 }
 
@@ -68,6 +78,40 @@ function writeOfflineAuthUsers(users: CachedAuthUser[]): void {
   localStorage.setItem(OFFLINE_AUTH_KEY, JSON.stringify(users))
 }
 
+function readPendingLocalAuthUsers(): PendingLocalAuthUser[] {
+  try {
+    return JSON.parse(localStorage.getItem(PENDING_LOCAL_AUTH_KEY) ?? '[]') as PendingLocalAuthUser[]
+  } catch {
+    return []
+  }
+}
+
+function writePendingLocalAuthUsers(users: PendingLocalAuthUser[]): void {
+  localStorage.setItem(PENDING_LOCAL_AUTH_KEY, JSON.stringify(users))
+}
+
+function rememberPendingLocalAuthUser(user: AppUser, password: string): void {
+  if (!user.id.startsWith('local_')) return
+  const pending = readPendingLocalAuthUsers().filter((entry) => entry.uid !== user.id)
+  pending.push({
+    uid: user.id,
+    email: user.email,
+    username: user.username,
+    password,
+    displayName: user.displayName,
+    updatedAt: Date.now()
+  })
+  writePendingLocalAuthUsers(pending)
+}
+
+export function getPendingLocalAuthUsers(): PendingLocalAuthUser[] {
+  return readPendingLocalAuthUsers()
+}
+
+export function clearPendingLocalAuthUser(uid: string): void {
+  writePendingLocalAuthUsers(readPendingLocalAuthUsers().filter((entry) => entry.uid !== uid))
+}
+
 async function cacheOfflineLogin(user: AppUser, password: string): Promise<void> {
   const username = normalizeUsername(user.username)
   const passwordHash = await sha256(`${username}:${password}`)
@@ -84,6 +128,7 @@ async function tryOfflineLogin(usernameInput: string, password: string): Promise
     (entry) => entry.username === username && entry.passwordHash === passwordHash
   )
   if (!cached?.user.active) return null
+  rememberPendingLocalAuthUser(cached.user, password)
   return cached.user
 }
 
@@ -114,6 +159,7 @@ export async function createFirstOfflineManager(params: {
     updatedAt: now
   }
   await cacheOfflineLogin(user, params.password)
+  rememberPendingLocalAuthUser(user, params.password)
   return user
 }
 
@@ -210,6 +256,7 @@ export async function createCashierAccount(
       updatedAt: now
     }
     await cacheOfflineLogin(appUser, data.password)
+    rememberPendingLocalAuthUser(appUser, data.password)
     return appUser
   }
   if (data.role === 'cashier' && data.cashierCode) {

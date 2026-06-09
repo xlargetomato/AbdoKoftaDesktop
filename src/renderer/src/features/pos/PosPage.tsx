@@ -119,6 +119,7 @@ export function PosPage(): React.ReactElement {
   const [tables, setTables] = useState<DiningTable[]>([])
   const [unpaidOrders, setUnpaidOrders] = useState<Order[]>([])
   const [selectedTableId, setSelectedTableId] = useState('')
+  const [tablePopupOpen, setTablePopupOpen] = useState(false)
   const [orderNote, setOrderNote] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
@@ -186,6 +187,17 @@ export function PosPage(): React.ReactElement {
     () => tables.find((table) => table.id === selectedTableId),
     [tables, selectedTableId]
   )
+  const groupedTables = useMemo(() => {
+    const groups = new Map<string, DiningTable[]>()
+    for (const table of tables) {
+      const key = table.categoryAr?.trim() || 'بدون تصنيف'
+      groups.set(key, [...(groups.get(key) ?? []), table])
+    }
+    return Array.from(groups.entries()).map(([category, categoryTables]) => ({
+      category,
+      tables: categoryTables
+    }))
+  }, [tables])
 
   function addToCart(item: MenuItem, quantity = 1, unitPrice = item.price): void {
     if (unavailableItems.has(item.id)) return
@@ -355,6 +367,55 @@ export function PosPage(): React.ReactElement {
         />
       )}
 
+      {tablePopupOpen && (
+        <div className="modal-overlay" onClick={() => setTablePopupOpen(false)}>
+          <div className="modal table-select-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="order-details__header">
+              <h2 className="order-details__title">اختيار الترابيزة</h2>
+              <button
+                type="button"
+                className="order-details__close"
+                onClick={() => setTablePopupOpen(false)}
+                aria-label="إغلاق"
+              >
+                x
+              </button>
+            </div>
+            {groupedTables.length === 0 ? (
+              <p className="table-picker__empty">لا توجد ترابيزات مفعلة</p>
+            ) : (
+              <div className="table-category-list">
+                {groupedTables.map((group) => (
+                  <section key={group.category} className="table-category-group">
+                    <h3>{group.category}</h3>
+                    <div className="table-picker table-picker--modal">
+                      {group.tables.map((table) => {
+                        const occupied = occupiedTableIds.has(table.id)
+                        return (
+                          <button
+                            key={table.id}
+                            type="button"
+                            className={`table-picker__btn${selectedTableId === table.id ? ' table-picker__btn--active' : ''}${occupied ? ' table-picker__btn--occupied' : ''}`}
+                            onClick={() => {
+                              setSelectedTableId(table.id)
+                              setTablePopupOpen(false)
+                            }}
+                            title={occupied ? 'عليها طلب غير مدفوع' : undefined}
+                          >
+                            <strong>{table.nameAr}</strong>
+                            {occupied && <span>مشغولة</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <aside className="pos-cart">
         <div className="pos-cart__header">الطلب</div>
         <div className="order-service-panel">
@@ -375,27 +436,18 @@ export function PosPage(): React.ReactElement {
             </button>
           </div>
           {orderType === 'dine_in' && (
-            <div className="table-picker">
-              {tables.length === 0 ? (
-                <p className="table-picker__empty">لا توجد ترابيزات مفعلة</p>
-              ) : (
-                tables.map((table) => {
-                  const occupied = occupiedTableIds.has(table.id)
-                  return (
-                    <button
-                      key={table.id}
-                      type="button"
-                      className={`table-picker__btn${selectedTableId === table.id ? ' table-picker__btn--active' : ''}${occupied ? ' table-picker__btn--occupied' : ''}`}
-                      onClick={() => setSelectedTableId(table.id)}
-                      title={occupied ? 'عليها طلب غير مدفوع' : undefined}
-                    >
-                      <strong>{table.nameAr}</strong>
-                      {table.categoryAr && <span>{table.categoryAr}</span>}
-                    </button>
-                  )
-                })
-              )}
-            </div>
+            <button
+              type="button"
+              className={`table-picker-trigger${selectedTable ? ' table-picker-trigger--selected' : ''}${selectedTable && occupiedTableIds.has(selectedTable.id) ? ' table-picker-trigger--occupied' : ''}`}
+              onClick={() => setTablePopupOpen(true)}
+            >
+              <span>الترابيزة</span>
+              <strong>
+                {selectedTable
+                  ? `${selectedTable.nameAr}${selectedTable.categoryAr ? ` - ${selectedTable.categoryAr}` : ''}`
+                  : tables.length ? 'اختيار ترابيزة' : 'لا توجد ترابيزات'}
+              </strong>
+            </button>
           )}
         </div>
         <div className="pos-cart__lines">

@@ -646,6 +646,40 @@ textarea {
   background: #fbbf24;
 }
 
+.sync-progress-toast {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 9000;
+  width: min(340px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-hover);
+}
+
+.sync-progress-toast__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.sync-progress-toast__track {
+  height: 8px;
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.sync-progress-toast__bar {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width var(--t-mid) var(--ease-out);
+}
+
 /* Cards & tables */
 .card {
   background: var(--color-surface);
@@ -1012,6 +1046,75 @@ textarea {
   color: var(--color-muted);
   font-size: 0.85rem;
   text-align: center;
+}
+
+.table-picker-trigger {
+  width: 100%;
+  margin-top: 10px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  text-align: right;
+}
+
+.table-picker-trigger span {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.table-picker-trigger strong {
+  font-size: 0.95rem;
+}
+
+.table-picker-trigger--selected {
+  border-color: var(--color-primary);
+}
+
+.table-picker-trigger--occupied {
+  background: #fef2f2;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.table-select-modal {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.table-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: min(520px, calc(100vh - 220px));
+  overflow-y: auto;
+  padding-inline-end: 4px;
+}
+
+.table-category-group {
+  border: 2px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.table-category-group h3 {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--color-border);
+  background: #f5f5f5;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.table-picker--modal {
+  max-height: none;
+  overflow: visible;
+  padding: 10px;
 }
 
 .pos-cart__lines {

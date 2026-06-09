@@ -25,10 +25,13 @@ interface SyncState {
   backendOnline: boolean
   firestorePending: boolean
   status: SyncStatus
+  syncProgress: number | null
+  syncMessage: string | null
   // Called by useSyncListener
   setBrowserOnline: (online: boolean) => void
   setBackendOnline: (online: boolean) => void
   setFirestorePending: (pending: boolean) => void
+  setSyncProgress: (progress: number | null, message?: string | null) => void
   // Called by write operations (order-service, inventory-service, etc.)
   // to show yellow only when real writes are in-flight
   pendingWrites: number
@@ -51,6 +54,8 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   backendOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   firestorePending: readDurablePending(),
   pendingWrites: 0,
+  syncProgress: null,
+  syncMessage: null,
   status: deriveStatus(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
     typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -74,13 +79,25 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   },
 
   setFirestorePending: (pending) => {
-    const { browserOnline, backendOnline, pendingWrites } = get()
+    const { browserOnline, backendOnline, pendingWrites, syncProgress } = get()
     // Don't clear pending if there are still in-flight writes
-    const effectivePending = pending || pendingWrites > 0
+    const effectivePending = pending || pendingWrites > 0 || syncProgress != null
     writeDurablePending(effectivePending)
     set({
       firestorePending: effectivePending,
       status: deriveStatus(browserOnline, backendOnline, effectivePending)
+    })
+  },
+
+  setSyncProgress: (progress, message = null) => {
+    const { browserOnline, backendOnline, pendingWrites } = get()
+    const pending = progress != null || pendingWrites > 0
+    writeDurablePending(pending)
+    set({
+      syncProgress: progress,
+      syncMessage: message,
+      firestorePending: pending,
+      status: deriveStatus(browserOnline, backendOnline, pending)
     })
   },
 
@@ -96,10 +113,10 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   },
 
   markWriteDone: () => {
-    const { browserOnline, backendOnline } = get()
+    const { browserOnline, backendOnline, syncProgress } = get()
     const pendingWrites = Math.max(0, get().pendingWrites - 1)
     const online = browserOnline && backendOnline
-    const firestorePending = pendingWrites > 0 || (!online && readDurablePending())
+    const firestorePending = pendingWrites > 0 || syncProgress != null || (!online && readDurablePending())
     if (!firestorePending) writeDurablePending(false)
     set({
       pendingWrites,

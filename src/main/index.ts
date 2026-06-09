@@ -58,7 +58,13 @@ function createWindow(): void {
   }
 }
 
-import { deleteAuthUser, resetAuthUserPassword } from './firebase-admin'
+import {
+  deleteAuthUser,
+  ensureAuthUser,
+  readAdminDocument,
+  resetAuthUserPassword,
+  writeAdminDocument
+} from './firebase-admin'
 import { initAutoUpdater } from './auto-updater'
 import {
   createActivationRequestFile,
@@ -159,6 +165,35 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:reset-password', async (_, uid: string, newPassword: string) => {
     try {
       await resetAuthUserPassword(uid, newPassword)
+      return { ok: true as const }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return { ok: false as const, error: message }
+    }
+  })
+
+  ipcMain.handle('auth:ensure-user', async (_, params: { uid: string; email: string; password: string; displayName: string }) => {
+    try {
+      await ensureAuthUser(params)
+      return { ok: true as const }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return { ok: false as const, error: message }
+    }
+  })
+
+  ipcMain.handle('admin:get-document', async (_, collectionName: string, documentId: string) => {
+    try {
+      return { ok: true as const, data: await readAdminDocument(collectionName, documentId) }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return { ok: false as const, error: message }
+    }
+  })
+
+  ipcMain.handle('admin:set-document', async (_, collectionName: string, documentId: string, data: unknown) => {
+    try {
+      await writeAdminDocument(collectionName, documentId, data)
       return { ok: true as const }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
