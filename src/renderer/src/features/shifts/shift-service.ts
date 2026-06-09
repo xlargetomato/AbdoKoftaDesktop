@@ -5,7 +5,7 @@ import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { listOrders } from '../orders/order-service'
-import { listInventoryTransactions } from '../inventory/inventory-service'
+import { listInventoryTransactions, listIngredients } from '../inventory/inventory-service'
 import { listCashDrawerTransactions } from '../cash/cash-service'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
@@ -24,8 +24,8 @@ export interface ShiftSummary {
   revenue: number
   drawerTotal: number
   expenses: number
-  suppliedInventory: InventoryTransaction[]
-  usedInventory: InventoryTransaction[]
+  suppliedInventory: Array<InventoryTransaction & { ingredientNameAr: string }>
+  usedInventory: Array<InventoryTransaction & { ingredientNameAr: string }>
   cashTransactions: CashDrawerTransaction[]
 }
 
@@ -223,10 +223,11 @@ export async function getUnarchivedShiftCount(): Promise<number> {
 }
 
 export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
-  const [allOrders, inventoryTransactions, cashTransactions] = await Promise.all([
+  const [allOrders, inventoryTransactions, cashTransactions, ingredients] = await Promise.all([
     listOrders(2000),
     listInventoryTransactions(),
-    listCashDrawerTransactions()
+    listCashDrawerTransactions(),
+    listIngredients()
   ])
   const orders = allOrders
     .filter((o) => orderBelongsToShift(o, shift))
@@ -240,6 +241,15 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
   const usedInventory = inventoryTransactions.filter(
     (tx) => transactionBelongsToShift(tx, shift, orderIds) && (tx.type === 'sale' || tx.type === 'waste')
   )
+  const ingredientMap = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient.nameAr]))
+  const withIngredientName = (
+    tx: InventoryTransaction
+  ): InventoryTransaction & { ingredientNameAr: string } => ({
+    ...tx,
+    ingredientNameAr: tx.ingredientNameAr?.trim() || ingredientMap.get(tx.ingredientId) || tx.ingredientId
+  })
+  const usedInventoryWithNames = usedInventory.map(withIngredientName)
+  const suppliedInventoryWithNames = suppliedInventory.map(withIngredientName)
   const shiftCashTransactions = cashTransactions.filter((tx) =>
     transactionBelongsToShift(tx, shift, orderIds)
   )
@@ -256,8 +266,8 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     revenue,
     drawerTotal,
     expenses,
-    suppliedInventory,
-    usedInventory,
+    suppliedInventory: suppliedInventoryWithNames,
+    usedInventory: usedInventoryWithNames,
     cashTransactions: shiftCashTransactions
   }
 }

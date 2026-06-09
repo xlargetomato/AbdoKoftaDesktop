@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { Order, OrderItem } from '@shared/types'
-import { cancelOrder, listOrders, getOrderItems, getSettings, markOrderPaid } from '@renderer/features/orders/order-service'
+import {
+  cancelOrder,
+  getOrderItems,
+  getSettings,
+  listOrders,
+  markOrderPaid
+} from '@renderer/features/orders/order-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
 import { orderReference } from '@shared/services/order-reference'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
@@ -8,6 +14,20 @@ import { useAuthStore } from '@renderer/features/auth/auth-store'
 interface OrderDetails {
   order: Order
   items: OrderItem[]
+}
+
+function isOrderUnpaid(order: Order): boolean {
+  return order.status === 'draft' || order.paymentStatus === 'unpaid'
+}
+
+function orderStatusLabel(order: Order): string {
+  if (order.status === 'cancelled') return 'ملغي'
+  return isOrderUnpaid(order) ? 'غير مدفوع' : 'مدفوع'
+}
+
+function orderPlaceLabel(order: Order): string {
+  if (!order.tableNameAr) return 'تيك أواي'
+  return `${order.tableNameAr}${order.tableCategoryAr ? ` - ${order.tableCategoryAr}` : ''}`
 }
 
 export function OrderHistoryPage(): React.ReactElement {
@@ -19,8 +39,14 @@ export function OrderHistoryPage(): React.ReactElement {
   const [message, setMessage] = useState('')
 
   async function load(): Promise<void> {
-    const o = await listOrders(100)
-    setOrders(o.filter((x) => x.status === 'draft' || x.status === 'completed' || x.status === 'cancelled'))
+    const loadedOrders = await listOrders(100)
+    setOrders(
+      loadedOrders.filter((order) =>
+        order.status === 'draft' ||
+        order.status === 'completed' ||
+        order.status === 'cancelled'
+      )
+    )
     setLoading(false)
   }
 
@@ -45,16 +71,16 @@ export function OrderHistoryPage(): React.ReactElement {
 
   async function handleCancel(order: Order): Promise<void> {
     const wasted = window.confirm(
-      'Ù‡Ù„ ÙŠØ¹ØªØ¨Ø± Ù…Ø®Ø²ÙˆÙ† Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨ Ù‡Ø¯Ø±ØŸ\nOK = Ù‡Ø¯Ø± ÙˆÙ„Ø§ ÙŠØ±Ø¬Ø¹ Ù„Ù„Ù…Ø®Ø²ÙˆÙ†\nCancel = ÙŠØ±Ø¬Ø¹ Ù„Ù„Ù…Ø®Ø²ÙˆÙ†'
+      'هل يعتبر مخزون هذا الطلب هدر؟\nموافق = هدر ولا يرجع للمخزون\nإلغاء = يرجع للمخزون'
     )
-    const reasonAr = window.prompt('Ø³Ø¨Ø¨ Ø§Ù„Ø¥Ù„ØºØ§Ø¡', '') ?? undefined
+    const reasonAr = window.prompt('سبب الإلغاء', '') ?? undefined
     await cancelOrder({
       orderId: order.id,
       cancelledBy: user.id,
       reasonAr,
       inventoryMode: wasted ? 'waste' : 'return'
     })
-    setMessage('ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø·Ù„Ø¨')
+    setMessage('تم إلغاء الطلب')
     await load()
   }
 
@@ -69,73 +95,80 @@ export function OrderHistoryPage(): React.ReactElement {
       getOrderItems(paid.id),
       getSettings()
     ])
-    setMessage('ØªÙ… ØªØ³Ø¬ÙŠÙ„ Ø¯ÙØ¹ Ø§Ù„Ø·Ù„Ø¨')
+    setMessage('تم تسجيل دفع الطلب')
     await load()
     await printReceipt(paid, items, settings)
   }
-  if (loading) return <p className="app-loading">Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...</p>
 
-  const cur = 'Ø¬.Ù…'
+  if (loading) return <p className="app-loading">جاري التحميل...</p>
+
+  const currency = 'ج.م'
 
   return (
     <>
       <div className="card">
-        <h2 className="card__title">Ø³Ø¬Ù„ Ø§Ù„Ø·Ù„Ø¨Ø§Øª</h2>
+        <h2 className="card__title">سجل الطلبات</h2>
         {message && <p className="form-message form-message--ok">{message}</p>}
         <table className="data-table">
           <thead>
             <tr>
-              <th>Ø±Ù‚Ù… Ø§Ù„Ø·Ù„Ø¨</th>
-              <th>Ø§Ù„Ø­Ø§Ù„Ø©</th>
-              <th>Ø§Ù„ØªØ±Ø§Ø¨ÙŠØ²Ø©</th>
-              <th>Ø§Ù„ØªØ§Ø±ÙŠØ®</th>
-              <th>Ø§Ù„ÙƒØ§Ø´ÙŠØ±</th>
-              <th>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</th>
+              <th>رقم الطلب</th>
+              <th>الحالة</th>
+              <th>الترابيزة</th>
+              <th>التاريخ</th>
+              <th>الكاشير</th>
+              <th>الإجمالي</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {orders.map((o) => {
-              const unpaid = o.status === 'draft' || o.paymentStatus === 'unpaid'
+            {orders.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-muted)' }}>
+                  لا توجد طلبات
+                </td>
+              </tr>
+            ) : orders.map((order) => {
+              const unpaid = isOrderUnpaid(order)
               return (
-                <tr key={o.id} className={unpaid ? 'order-row--unpaid' : ''}>
-                  <td>#{orderReference(o)}</td>
+                <tr key={order.id} className={unpaid ? 'order-row--unpaid' : ''}>
+                  <td>#{orderReference(order)}</td>
                   <td>
                     <span className={`order-status-pill${unpaid ? ' order-status-pill--unpaid' : ''}`}>
-                      {o.status === 'cancelled' ? 'Ù…Ù„ØºÙŠ' : unpaid ? 'ØºÙŠØ± Ù…Ø¯ÙÙˆØ¹' : 'Ù…Ø¯ÙÙˆØ¹'}
+                      {orderStatusLabel(order)}
                     </span>
                   </td>
-                  <td>{o.tableNameAr ? `${o.tableNameAr}${o.tableCategoryAr ? ` - ${o.tableCategoryAr}` : ''}` : 'ØªÙŠÙƒ Ø£ÙˆØ§ÙŠ'}</td>
-                  <td>{new Date(o.completedAt ?? o.createdAt).toLocaleString('ar-EG')}</td>
-                  <td>{o.cashierName}</td>
-                  <td>{o.total.toFixed(2)} {cur}</td>
+                  <td>{orderPlaceLabel(order)}</td>
+                  <td>{new Date(order.completedAt ?? order.createdAt).toLocaleString('ar-EG')}</td>
+                  <td>{order.cashierName}</td>
+                  <td>{order.total.toFixed(2)} {currency}</td>
                   <td>
                     <div className="table-actions">
                       <button
                         type="button"
                         className="btn btn--secondary btn--sm"
-                        onClick={() => void openDetails(o)}
+                        onClick={() => void openDetails(order)}
                         disabled={loadingDetails}
                       >
-                        ØªÙØ§ØµÙŠÙ„
+                        تفاصيل
                       </button>
                       {!unpaid && (
                         <button
                           type="button"
                           className="btn btn--secondary btn--sm"
-                          onClick={() => void reprint(o)}
+                          onClick={() => void reprint(order)}
                         >
-                          Ø·Ø¨Ø§Ø¹Ø©
+                          طباعة
                         </button>
                       )}
-                      {unpaid && o.status !== 'cancelled' && (
+                      {unpaid && order.status !== 'cancelled' && (
                         <>
-                          <button type="button" className="btn btn--primary btn--sm" onClick={() => void handleMarkPaid(o, 'cash')}>Ø¯ÙØ¹ Ù†Ù‚Ø¯ÙŠ</button>
-                          <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleMarkPaid(o, 'card')}>Ø¯ÙØ¹ Ø¨Ø·Ø§Ù‚Ø©</button>
+                          <button type="button" className="btn btn--primary btn--sm" onClick={() => void handleMarkPaid(order, 'cash')}>دفع نقدي</button>
+                          <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleMarkPaid(order, 'card')}>دفع بطاقة</button>
                         </>
                       )}
-                      {o.status !== 'cancelled' && (
-                        <button type="button" className="btn btn--danger btn--sm" onClick={() => void handleCancel(o)}>Cancel</button>
+                      {order.status !== 'cancelled' && (
+                        <button type="button" className="btn btn--danger btn--sm" onClick={() => void handleCancel(order)}>إلغاء</button>
                       )}
                     </div>
                   </td>
@@ -146,60 +179,55 @@ export function OrderHistoryPage(): React.ReactElement {
         </table>
       </div>
 
-      {/* â”€â”€ Order details modal â”€â”€ */}
       {details && (
         <div className="modal-overlay" onClick={() => setDetails(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-
-            {/* Header */}
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="order-details__header">
               <h2 className="order-details__title">
-                Ø·Ù„Ø¨ #{orderReference(details.order)}
+                طلب #{orderReference(details.order)}
               </h2>
               <button
                 type="button"
                 className="order-details__close"
                 onClick={() => setDetails(null)}
-                aria-label="Ø¥ØºÙ„Ø§Ù‚"
+                aria-label="إغلاق"
               >
-                âœ•
+                x
               </button>
             </div>
 
-            {/* Meta */}
             <div className="order-details__meta">
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">Ø§Ù„ØªØ§Ø±ÙŠØ®</span>
+                <span className="order-details__meta-label">التاريخ</span>
                 <span>{new Date(details.order.completedAt ?? details.order.createdAt).toLocaleString('ar-EG')}</span>
               </div>
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">Ø§Ù„ÙƒØ§Ø´ÙŠØ±</span>
+                <span className="order-details__meta-label">الكاشير</span>
                 <span>{details.order.cashierName}</span>
               </div>
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">Ø§Ù„Ù†ÙˆØ¹</span>
-                <span>{details.order.tableNameAr ? `${details.order.tableNameAr}${details.order.tableCategoryAr ? ` - ${details.order.tableCategoryAr}` : ''}` : 'ØªÙŠÙƒ Ø£ÙˆØ§ÙŠ'}</span>
+                <span className="order-details__meta-label">النوع</span>
+                <span>{orderPlaceLabel(details.order)}</span>
               </div>
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">Ø§Ù„Ø¯ÙØ¹</span>
-                <span>{details.order.status === 'draft' || details.order.paymentStatus === 'unpaid' ? 'ØºÙŠØ± Ù…Ø¯ÙÙˆØ¹' : details.order.status === 'cancelled' ? 'Ù…Ù„ØºÙŠ' : 'Ù…Ø¯ÙÙˆØ¹'}</span>
+                <span className="order-details__meta-label">الدفع</span>
+                <span>{orderStatusLabel(details.order)}</span>
               </div>
               {details.order.noteAr && (
                 <div className="order-details__meta-row">
-                  <span className="order-details__meta-label">Ù…Ù„Ø§Ø­Ø¸Ø©</span>
+                  <span className="order-details__meta-label">ملاحظة</span>
                   <span>{details.order.noteAr}</span>
                 </div>
               )}
             </div>
 
-            {/* Items */}
             <table className="data-table" style={{ marginTop: 12 }}>
               <thead>
                 <tr>
-                  <th>Ø§Ù„ØµÙ†Ù</th>
-                  <th>Ø§Ù„ÙƒÙ…ÙŠØ©</th>
-                  <th>Ø³Ø¹Ø± Ø§Ù„ÙˆØ­Ø¯Ø©</th>
-                  <th>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</th>
+                  <th>الصنف</th>
+                  <th>الكمية</th>
+                  <th>سعر الوحدة</th>
+                  <th>الإجمالي</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,36 +242,34 @@ export function OrderHistoryPage(): React.ReactElement {
                       )}
                     </td>
                     <td>{item.quantity}</td>
-                    <td>{item.unitPrice.toFixed(2)} {cur}</td>
-                    <td>{item.lineTotal.toFixed(2)} {cur}</td>
+                    <td>{item.unitPrice.toFixed(2)} {currency}</td>
+                    <td>{item.lineTotal.toFixed(2)} {currency}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            {/* Totals */}
             <div className="order-details__totals">
               <div className="order-details__total-row">
-                <span>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</span>
-                <strong>{details.order.total.toFixed(2)} {cur}</strong>
+                <span>الإجمالي</span>
+                <strong>{details.order.total.toFixed(2)} {currency}</strong>
               </div>
             </div>
 
-            {/* Actions */}
             <div className="modal-actions" style={{ marginTop: 16 }}>
               <button
                 type="button"
                 className="btn btn--primary btn--sm"
                 onClick={() => void reprint(details.order)}
               >
-                Ø·Ø¨Ø§Ø¹Ø© Ø§Ù„Ø¥ÙŠØµØ§Ù„
+                طباعة الإيصال
               </button>
               <button
                 type="button"
                 className="btn btn--secondary btn--sm"
                 onClick={() => setDetails(null)}
               >
-                Ø¥ØºÙ„Ø§Ù‚
+                إغلاق
               </button>
             </div>
           </div>

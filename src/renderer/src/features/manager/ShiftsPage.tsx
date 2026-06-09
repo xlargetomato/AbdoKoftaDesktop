@@ -236,7 +236,7 @@ export function ShiftsPage(): React.ReactElement {
                   </td>
                 </tr>
               ) : selected.usedInventory.map((tx) => (
-                <tr key={tx.id}><td>{tx.ingredientId}</td><td>{tx.quantity.toFixed(2)}</td><td>{tx.unit}</td></tr>
+                <tr key={tx.id}><td>{tx.ingredientNameAr ?? tx.ingredientId}</td><td>{tx.quantity.toFixed(2)}</td><td>{tx.unit}</td></tr>
               ))}
             </tbody>
           </table>

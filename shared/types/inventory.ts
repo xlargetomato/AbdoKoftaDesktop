@@ -18,6 +18,7 @@ export interface Ingredient {
 export interface InventoryTransaction {
   id: string
   ingredientId: string
+  ingredientNameAr?: string
   type: InventoryTransactionType
   /** Signed quantity in base unit (positive = in, negative = out) */
   quantity: number
