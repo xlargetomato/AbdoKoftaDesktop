@@ -1,5 +1,6 @@
 export interface MenuCategory {
   id: string
+  parentId?: string
   nameAr: string
   sortOrder: number
   active: boolean
@@ -13,6 +14,8 @@ export interface MenuItem {
   nameAr: string
   descriptionAr?: string
   price: number
+  sizeOptions?: MenuItemSizeOption[]
+  attachments?: MenuItemAttachment[]
   isWeighted?: boolean
   weightedPriceOptions?: WeightedPriceOption[]
   allowCustomWeight?: boolean
@@ -23,6 +26,18 @@ export interface MenuItem {
   sortOrder: number
   createdAt: number
   updatedAt: number
+}
+
+export interface MenuItemSizeOption {
+  id: string
+  labelAr: string
+  price: number
+}
+
+export interface MenuItemAttachment {
+  id: string
+  nameAr: string
+  price: number
 }
 
 export interface WeightedPriceOption {

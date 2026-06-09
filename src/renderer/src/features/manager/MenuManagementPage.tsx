@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import type { MenuCategory, MenuItem, RecipeLine, WeightedPriceOption } from '@shared/types'
+import type {
+  MenuCategory,
+  MenuItem,
+  MenuItemAttachment,
+  MenuItemSizeOption,
+  RecipeLine,
+  WeightedPriceOption
+} from '@shared/types'
 import {
   listCategories,
   createCategory,
@@ -33,6 +40,18 @@ type WeightedPriceOptionForm = {
   price: string
 }
 
+type SizeOptionForm = {
+  id: string
+  labelAr: string
+  price: string
+}
+
+type AttachmentForm = {
+  id: string
+  nameAr: string
+  price: string
+}
+
 type RecipeLineForm = {
   ingredientId: string
   quantity: string
@@ -44,6 +63,8 @@ type ItemEditState = {
   nameAr: string
   price: string
   categoryId: string
+  sizeOptions: SizeOptionForm[]
+  attachments: AttachmentForm[]
   isWeighted: boolean
   weightedPriceOptions: WeightedPriceOptionForm[]
   allowCustomWeight: boolean
@@ -56,6 +77,22 @@ function newWeightedOption(kiloPreset = false): WeightedPriceOptionForm {
     id: crypto.randomUUID(),
     label: kiloPreset ? '1 كجم' : '',
     weightGrams: kiloPreset ? '1000' : '',
+    price: ''
+  }
+}
+
+function newSizeOption(): SizeOptionForm {
+  return {
+    id: crypto.randomUUID(),
+    labelAr: '',
+    price: ''
+  }
+}
+
+function newAttachment(): AttachmentForm {
+  return {
+    id: crypto.randomUUID(),
+    nameAr: '',
     price: ''
   }
 }
@@ -80,18 +117,58 @@ function normalizeWeightedOptions(options: WeightedPriceOptionForm[]): WeightedP
     .filter((option) => option.label && option.weightKg > 0 && option.price >= 0)
 }
 
+function toSizeOptionForm(option: MenuItemSizeOption): SizeOptionForm {
+  return {
+    id: option.id,
+    labelAr: option.labelAr,
+    price: String(option.price)
+  }
+}
+
+function normalizeSizeOptions(options: SizeOptionForm[]): MenuItemSizeOption[] {
+  return options
+    .map((option) => ({
+      id: option.id || crypto.randomUUID(),
+      labelAr: option.labelAr.trim(),
+      price: Number(option.price)
+    }))
+    .filter((option) => option.labelAr && option.price >= 0)
+}
+
+function toAttachmentForm(option: MenuItemAttachment): AttachmentForm {
+  return {
+    id: option.id,
+    nameAr: option.nameAr,
+    price: String(option.price)
+  }
+}
+
+function normalizeAttachments(options: AttachmentForm[]): MenuItemAttachment[] {
+  return options
+    .map((option) => ({
+      id: option.id || crypto.randomUUID(),
+      nameAr: option.nameAr.trim(),
+      price: Number(option.price)
+    }))
+    .filter((option) => option.nameAr && option.price >= 0)
+}
+
 export function MenuManagementPage(): React.ReactElement {
   const [categories, setCategories] = useState<MenuCategory[]>([])
   const [items, setItems] = useState<MenuItem[]>([])
   const [ingredients, setIngredients] = useState<{ id: string; nameAr: string; unit: string }[]>([])
   const [catName, setCatName] = useState('')
+  const [catParentId, setCatParentId] = useState('')
   const [editingCatId, setEditingCatId] = useState<string | null>(null)
   const [editingCatName, setEditingCatName] = useState('')
+  const [editingCatParentId, setEditingCatParentId] = useState('')
   const [editingItem, setEditingItem] = useState<ItemEditState | null>(null)
   const [itemForm, setItemForm] = useState({
     categoryId: '',
     nameAr: '',
     price: '',
+    sizeOptions: [] as SizeOptionForm[],
+    attachments: [] as AttachmentForm[],
     isWeighted: false,
     weightedPriceOptions: [newWeightedOption(true)] as WeightedPriceOptionForm[],
     allowCustomWeight: false,
@@ -118,8 +195,9 @@ export function MenuManagementPage(): React.ReactElement {
     e.preventDefault()
     setMessage(null)
     try {
-      await createCategory(catName.trim(), categories.length)
+      await createCategory(catName.trim(), categories.length, catParentId || undefined)
       setCatName('')
+      setCatParentId('')
       setMessage('تم إضافة التصنيف')
       await load()
     } catch (err) { setMessage(err instanceof Error ? err.message : 'فشل') }
@@ -127,7 +205,10 @@ export function MenuManagementPage(): React.ReactElement {
 
   async function saveCatName(id: string): Promise<void> {
     if (!editingCatName.trim()) return
-    await updateCategory(id, { nameAr: editingCatName.trim() })
+    await updateCategory(id, {
+      nameAr: editingCatName.trim(),
+      parentId: editingCatParentId || undefined
+    })
     setEditingCatId(null)
     setMessage('تم تعديل التصنيف')
     await load()
@@ -158,6 +239,40 @@ export function MenuManagementPage(): React.ReactElement {
     })
   }
 
+  function updateSizeOption(index: number, patch: Partial<SizeOptionForm>): void {
+    setItemForm((form) => {
+      const sizeOptions = [...form.sizeOptions]
+      sizeOptions[index] = { ...sizeOptions[index]!, ...patch }
+      return { ...form, sizeOptions }
+    })
+  }
+
+  function updateEditingSizeOption(index: number, patch: Partial<SizeOptionForm>): void {
+    setEditingItem((item) => {
+      if (!item) return item
+      const sizeOptions = [...item.sizeOptions]
+      sizeOptions[index] = { ...sizeOptions[index]!, ...patch }
+      return { ...item, sizeOptions }
+    })
+  }
+
+  function updateAttachment(index: number, patch: Partial<AttachmentForm>): void {
+    setItemForm((form) => {
+      const attachments = [...form.attachments]
+      attachments[index] = { ...attachments[index]!, ...patch }
+      return { ...form, attachments }
+    })
+  }
+
+  function updateEditingAttachment(index: number, patch: Partial<AttachmentForm>): void {
+    setEditingItem((item) => {
+      if (!item) return item
+      const attachments = [...item.attachments]
+      attachments[index] = { ...attachments[index]!, ...patch }
+      return { ...item, attachments }
+    })
+  }
+
   function validateWeightedPricing(options: WeightedPriceOption[], allowCustom: boolean, customPrice: string): boolean {
     if (options.length === 0) {
       setMessage('أضف سعر ميزان واحد على الأقل')
@@ -179,6 +294,8 @@ export function MenuManagementPage(): React.ReactElement {
       .map((l) => ({ ingredientId: l.ingredientId, quantity: Number(l.quantity), unit: l.unit }))
     if (lines.length === 0) { setMessage('أضف مكوّناً واحداً على الأقل'); return }
     const weightedPriceOptions = normalizeWeightedOptions(itemForm.weightedPriceOptions)
+    const sizeOptions = normalizeSizeOptions(itemForm.sizeOptions)
+    const attachments = normalizeAttachments(itemForm.attachments)
     if (itemForm.isWeighted && !validateWeightedPricing(weightedPriceOptions, itemForm.allowCustomWeight, itemForm.customWeightUnitPrice)) return
 
     try {
@@ -190,6 +307,8 @@ export function MenuManagementPage(): React.ReactElement {
               ? Number(itemForm.customWeightUnitPrice)
               : weightedPriceOptions[0] ? weightedPriceOptions[0].price / weightedPriceOptions[0].weightKg : 0)
           : Number(itemForm.price),
+        sizeOptions: itemForm.isWeighted ? [] : sizeOptions,
+        attachments,
         isWeighted: itemForm.isWeighted,
         weightedPriceOptions,
         allowCustomWeight: itemForm.isWeighted ? itemForm.allowCustomWeight : undefined,
@@ -201,6 +320,8 @@ export function MenuManagementPage(): React.ReactElement {
         categoryId: itemForm.categoryId,
         nameAr: '',
         price: '',
+        sizeOptions: [],
+        attachments: [],
         isWeighted: false,
         weightedPriceOptions: [newWeightedOption(true)],
         allowCustomWeight: false,
@@ -215,6 +336,8 @@ export function MenuManagementPage(): React.ReactElement {
   async function saveItemEdit(): Promise<void> {
     if (!editingItem) return
     const weightedPriceOptions = normalizeWeightedOptions(editingItem.weightedPriceOptions)
+    const sizeOptions = normalizeSizeOptions(editingItem.sizeOptions)
+    const attachments = normalizeAttachments(editingItem.attachments)
     if (editingItem.isWeighted && !validateWeightedPricing(weightedPriceOptions, editingItem.allowCustomWeight, editingItem.customWeightUnitPrice)) return
     await updateMenuItem(editingItem.id, {
       nameAr: editingItem.nameAr.trim(),
@@ -224,6 +347,8 @@ export function MenuManagementPage(): React.ReactElement {
             : weightedPriceOptions[0] ? weightedPriceOptions[0].price / weightedPriceOptions[0].weightKg : 0)
         : Number(editingItem.price),
       categoryId: editingItem.categoryId,
+      sizeOptions: editingItem.isWeighted ? [] : sizeOptions,
+      attachments,
       isWeighted: editingItem.isWeighted,
       weightedPriceOptions: editingItem.isWeighted ? weightedPriceOptions : [],
       allowCustomWeight: editingItem.isWeighted ? editingItem.allowCustomWeight : false,
@@ -264,6 +389,8 @@ export function MenuManagementPage(): React.ReactElement {
       nameAr: item.nameAr,
       price: String(item.price),
       categoryId: item.categoryId,
+      sizeOptions: (item.sizeOptions ?? []).map(toSizeOptionForm),
+      attachments: (item.attachments ?? []).map(toAttachmentForm),
       isWeighted: !!item.isWeighted,
       weightedPriceOptions: (item.weightedPriceOptions ?? []).map(toWeightedOptionForm),
       allowCustomWeight: !!item.allowCustomWeight,
@@ -285,6 +412,12 @@ export function MenuManagementPage(): React.ReactElement {
         <h2 className="card__title">التصنيفات</h2>
         <form onSubmit={(e) => void addCategory(e)} className="page-toolbar">
           <input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="اسم التصنيف" required />
+          <select value={catParentId} onChange={(e) => setCatParentId(e.target.value)}>
+            <option value="">مجموعة رئيسية</option>
+            {categories
+              .filter((category) => !category.parentId)
+              .map((category) => <option key={category.id} value={category.id}>داخل: {category.nameAr}</option>)}
+          </select>
           <button type="submit" className="btn btn--primary">إضافة تصنيف</button>
         </form>
         <ul className="category-list">
@@ -295,15 +428,27 @@ export function MenuManagementPage(): React.ReactElement {
                 <button type="button" className="sort-arrow-btn" disabled={idx === categories.length - 1} onClick={() => void moveCat(idx, 1)} aria-label="أسفل"><MdArrowDownward /></button>
               </div>
               {editingCatId === c.id ? (
-                <input
-                  className="inline-edit-input"
-                  value={editingCatName}
-                  onChange={(e) => setEditingCatName(e.target.value)}
-                  autoFocus
-                  onKeyDown={(e) => { if (e.key === 'Enter') void saveCatName(c.id); if (e.key === 'Escape') setEditingCatId(null) }}
-                />
+                <div className="page-toolbar" style={{ gap: 6 }}>
+                  <input
+                    className="inline-edit-input"
+                    value={editingCatName}
+                    onChange={(e) => setEditingCatName(e.target.value)}
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter') void saveCatName(c.id); if (e.key === 'Escape') setEditingCatId(null) }}
+                  />
+                  <select className="inline-edit-input" value={editingCatParentId} onChange={(e) => setEditingCatParentId(e.target.value)}>
+                    <option value="">بدون مجموعة</option>
+                    {categories
+                      .filter((category) => category.id !== c.id && !category.parentId)
+                      .map((category) => <option key={category.id} value={category.id}>داخل: {category.nameAr}</option>)}
+                  </select>
+                </div>
               ) : (
-                <span>{c.nameAr} {!c.active && <em style={{ color: 'var(--color-muted)', fontSize: '0.8rem' }}>(معطّل)</em>}</span>
+                <span>
+                  {c.nameAr}
+                  {c.parentId && <em style={{ color: 'var(--color-muted)', fontSize: '0.8rem' }}> - {categories.find((parent) => parent.id === c.parentId)?.nameAr}</em>}
+                  {!c.active && <em style={{ color: 'var(--color-muted)', fontSize: '0.8rem' }}>(معطّل)</em>}
+                </span>
               )}
               <div className="table-actions">
                 {editingCatId === c.id ? (
@@ -313,7 +458,7 @@ export function MenuManagementPage(): React.ReactElement {
                   </>
                 ) : (
                   <>
-                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => { setEditingCatId(c.id); setEditingCatName(c.nameAr) }}>
+                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => { setEditingCatId(c.id); setEditingCatName(c.nameAr); setEditingCatParentId(c.parentId ?? '') }}>
                       <MdEdit /> تعديل
                     </button>
                     <button type="button" className={`btn btn--sm ${c.active ? 'btn--secondary' : 'btn--danger'}`} onClick={() => void updateCategory(c.id, { active: !c.active }).then(load)}>
@@ -348,6 +493,30 @@ export function MenuManagementPage(): React.ReactElement {
               <input type="number" min="0" step="0.01" value={itemForm.price} onChange={(e) => setItemForm((f) => ({ ...f, price: e.target.value }))} required />
             </label>
           )}
+          {!itemForm.isWeighted && (
+            <div className="weighted-pricing-editor">
+              <h3>أحجام الصنف</h3>
+              {itemForm.sizeOptions.map((option, idx) => (
+                <div key={option.id} className="weighted-pricing-row">
+                  <input value={option.labelAr} onChange={(e) => updateSizeOption(idx, { labelAr: e.target.value })} placeholder="الحجم مثل صغير" />
+                  <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateSizeOption(idx, { price: e.target.value })} placeholder="السعر" />
+                  <button type="button" className="btn btn--danger btn--sm" onClick={() => setItemForm((f) => ({ ...f, sizeOptions: f.sizeOptions.filter((_, i) => i !== idx) }))}><MdClose /></button>
+                </div>
+              ))}
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setItemForm((f) => ({ ...f, sizeOptions: [...f.sizeOptions, newSizeOption()] }))}>+ حجم</button>
+            </div>
+          )}
+          <div className="weighted-pricing-editor">
+            <h3>المرفقات التلقائية</h3>
+            {itemForm.attachments.map((option, idx) => (
+              <div key={option.id} className="weighted-pricing-row">
+                <input value={option.nameAr} onChange={(e) => updateAttachment(idx, { nameAr: e.target.value })} placeholder="اسم المرفق" />
+                <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateAttachment(idx, { price: e.target.value })} placeholder="السعر" />
+                <button type="button" className="btn btn--danger btn--sm" onClick={() => setItemForm((f) => ({ ...f, attachments: f.attachments.filter((_, i) => i !== idx) }))}><MdClose /></button>
+              </div>
+            ))}
+            <button type="button" className="btn btn--secondary btn--sm" onClick={() => setItemForm((f) => ({ ...f, attachments: [...f.attachments, newAttachment()] }))}>+ مرفق</button>
+          </div>
           <label className="field field--checkbox">
             <input
               type="checkbox"
@@ -456,7 +625,13 @@ export function MenuManagementPage(): React.ReactElement {
                     <select className="inline-edit-input" value={editingItem.categoryId} onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value })}>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
                     </select>
-                  ) : (categories.find((c) => c.id === item.categoryId)?.nameAr ?? '-')}</td>
+                  ) : (
+                    <>
+                      {categories.find((c) => c.id === item.categoryId)?.nameAr ?? '-'}
+                      {(item.sizeOptions?.length ?? 0) > 0 && <div style={{ color: 'var(--color-muted)', fontSize: '0.78rem' }}>أحجام: {item.sizeOptions!.map((option) => option.labelAr).join('، ')}</div>}
+                      {(item.attachments?.length ?? 0) > 0 && <div style={{ color: 'var(--color-muted)', fontSize: '0.78rem' }}>مرفقات: {item.attachments!.map((option) => option.nameAr).join('، ')}</div>}
+                    </>
+                  )}</td>
                   <td>{isEditing ? (
                     <select className="inline-edit-input" value={editingItem.active ? 'active' : 'inactive'} onChange={(e) => setEditingItem({ ...editingItem, active: e.target.value === 'active' })}>
                       <option value="active">مفعّل</option>
@@ -505,10 +680,34 @@ export function MenuManagementPage(): React.ReactElement {
                       </div>
                     )}
                     {isEditing && !editingItem.isWeighted && (
-                      <label className="field field--checkbox weighted-pricing-editor--inline">
-                        <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked, weightedPriceOptions: [newWeightedOption(true)] })} />
-                        <span>منتج ميزان</span>
-                      </label>
+                      <div className="weighted-pricing-editor weighted-pricing-editor--inline">
+                        <label className="field field--checkbox">
+                          <input type="checkbox" checked={editingItem.isWeighted} onChange={(e) => setEditingItem({ ...editingItem, isWeighted: e.target.checked, weightedPriceOptions: [newWeightedOption(true)] })} />
+                          <span>منتج ميزان</span>
+                        </label>
+                        <h3>الأحجام</h3>
+                        {editingItem.sizeOptions.map((option, optionIdx) => (
+                          <div key={option.id} className="weighted-pricing-row">
+                            <input value={option.labelAr} onChange={(e) => updateEditingSizeOption(optionIdx, { labelAr: e.target.value })} placeholder="الحجم" />
+                            <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateEditingSizeOption(optionIdx, { price: e.target.value })} placeholder="السعر" />
+                            <button type="button" className="btn btn--danger btn--sm" onClick={() => setEditingItem({ ...editingItem, sizeOptions: editingItem.sizeOptions.filter((_, i) => i !== optionIdx) })}><MdClose /></button>
+                          </div>
+                        ))}
+                        <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditingItem({ ...editingItem, sizeOptions: [...editingItem.sizeOptions, newSizeOption()] })}>+ حجم</button>
+                      </div>
+                    )}
+                    {isEditing && (
+                      <div className="weighted-pricing-editor weighted-pricing-editor--inline">
+                        <h3>المرفقات</h3>
+                        {editingItem.attachments.map((option, optionIdx) => (
+                          <div key={option.id} className="weighted-pricing-row">
+                            <input value={option.nameAr} onChange={(e) => updateEditingAttachment(optionIdx, { nameAr: e.target.value })} placeholder="اسم المرفق" />
+                            <input type="number" min="0" step="0.01" value={option.price} onChange={(e) => updateEditingAttachment(optionIdx, { price: e.target.value })} placeholder="السعر" />
+                            <button type="button" className="btn btn--danger btn--sm" onClick={() => setEditingItem({ ...editingItem, attachments: editingItem.attachments.filter((_, i) => i !== optionIdx) })}><MdClose /></button>
+                          </div>
+                        ))}
+                        <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditingItem({ ...editingItem, attachments: [...editingItem.attachments, newAttachment()] })}>+ مرفق</button>
+                      </div>
                     )}
                   </td>
                 </tr>

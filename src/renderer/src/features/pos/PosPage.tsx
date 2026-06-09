@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
-import type { DiningTable, MenuCategory, MenuItem, Order } from '@shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DiningTable, MenuCategory, MenuItem, MenuItemSizeOption, Order, OrderType } from '@shared/types'
 import { getIngredientStocks } from '@renderer/features/inventory/inventory-service'
 import { listCategories, listMenuItems, getRecipeByMenuItem } from '@renderer/features/menu/menu-service'
 import {
@@ -22,6 +22,7 @@ import { closeShift, getOpenShiftForCashier } from '@renderer/features/shifts/sh
 
 interface LocalCartLine extends CartLine {
   key: string
+  parentKey?: string
 }
 
 interface WeightPopupProps {
@@ -31,11 +32,23 @@ interface WeightPopupProps {
   onClose: () => void
 }
 
-function WeightPopup({ item, anchor, onSelect, onClose }: WeightPopupProps): React.ReactElement {
+interface SizePopupProps {
+  item: MenuItem
+  anchor: DOMRect
+  onSelect: (size: MenuItemSizeOption) => void
+  onClose: () => void
+}
+
+function FloatingPopup({
+  anchor,
+  onClose,
+  children
+}: {
+  anchor: DOMRect
+  onClose: () => void
+  children: React.ReactNode
+}): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null)
-  const [customGrams, setCustomGrams] = useState('')
-  const options = item.weightedPriceOptions ?? []
-  const customUnitPrice = item.customWeightUnitPrice ?? item.price
 
   useEffect(() => {
     function handler(e: MouseEvent): void {
@@ -45,16 +58,30 @@ function WeightPopup({ item, anchor, onSelect, onClose }: WeightPopupProps): Rea
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    zIndex: 500,
-    left: anchor.left,
-    top: anchor.bottom + 6,
-    minWidth: Math.max(anchor.width || 160, 220)
-  }
+  return (
+    <div
+      ref={ref}
+      className="weight-popup"
+      style={{
+        position: 'fixed',
+        zIndex: 500,
+        left: anchor.left,
+        top: anchor.bottom + 6,
+        minWidth: Math.max(anchor.width || 160, 220)
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+function WeightPopup({ item, anchor, onSelect, onClose }: WeightPopupProps): React.ReactElement {
+  const [customGrams, setCustomGrams] = useState('')
+  const options = item.weightedPriceOptions ?? []
+  const customUnitPrice = item.customWeightUnitPrice ?? item.price
 
   return (
-    <div ref={ref} className="weight-popup" style={style}>
+    <FloatingPopup anchor={anchor} onClose={onClose}>
       <div className="weight-popup__header">
         <span>{item.nameAr}</span>
         <span className="weight-popup__price">
@@ -102,7 +129,31 @@ function WeightPopup({ item, anchor, onSelect, onClose }: WeightPopupProps): Rea
           </button>
         </div>
       )}
-    </div>
+    </FloatingPopup>
+  )
+}
+
+function SizePopup({ item, anchor, onSelect, onClose }: SizePopupProps): React.ReactElement {
+  return (
+    <FloatingPopup anchor={anchor} onClose={onClose}>
+      <div className="weight-popup__header">
+        <span>{item.nameAr}</span>
+        <span className="weight-popup__price">اختر الحجم</span>
+      </div>
+      <div className="weight-popup__shortcuts">
+        {(item.sizeOptions ?? []).map((size) => (
+          <button
+            key={size.id}
+            type="button"
+            className="weight-popup__btn"
+            onClick={() => { onSelect(size); onClose() }}
+          >
+            <span>{size.labelAr}</span>
+            <span>{size.price.toFixed(2)}</span>
+          </button>
+        ))}
+      </div>
+    </FloatingPopup>
   )
 }
 
@@ -115,7 +166,7 @@ export function PosPage(): React.ReactElement {
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<LocalCartLine[]>([])
-  const [orderType, setOrderType] = useState<'takeaway' | 'dine_in'>('takeaway')
+  const [orderType, setOrderType] = useState<OrderType>('takeaway')
   const [tables, setTables] = useState<DiningTable[]>([])
   const [unpaidOrders, setUnpaidOrders] = useState<Order[]>([])
   const [selectedTableId, setSelectedTableId] = useState('')
@@ -124,6 +175,7 @@ export function PosPage(): React.ReactElement {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [weightPopup, setWeightPopup] = useState<{ item: MenuItem; rect: DOMRect } | null>(null)
+  const [sizePopup, setSizePopup] = useState<{ item: MenuItem; rect: DOMRect } | null>(null)
 
   const load = useCallback(async () => {
     const [cats, menu, stocks, diningTables, unpaid] = await Promise.all([
@@ -133,7 +185,7 @@ export function PosPage(): React.ReactElement {
       listDiningTables(),
       listUnpaidDineInOrders()
     ])
-    setCategories(cats.filter((c) => c.active))
+    setCategories(cats.filter((category) => category.active))
     setItems(menu)
     setTables(diningTables)
     setUnpaidOrders(unpaid)
@@ -141,9 +193,9 @@ export function PosPage(): React.ReactElement {
 
     const outOfStock = new Map<string, string>()
     const lowStock = new Set<string>()
-    for (const s of stocks) {
-      if (s.quantity <= 0) outOfStock.set(s.ingredientId, s.nameAr)
-      else if (s.lowStockThreshold != null && s.quantity <= s.lowStockThreshold) lowStock.add(s.ingredientId)
+    for (const stock of stocks) {
+      if (stock.quantity <= 0) outOfStock.set(stock.ingredientId, stock.nameAr)
+      else if (stock.lowStockThreshold != null && stock.quantity <= stock.lowStockThreshold) lowStock.add(stock.ingredientId)
     }
 
     const unavailable = new Map<string, string>()
@@ -167,15 +219,30 @@ export function PosPage(): React.ReactElement {
 
   useEffect(() => { void load() }, [load])
 
+  const categoryChildren = useMemo(() => {
+    const children = new Map<string, MenuCategory[]>()
+    for (const category of categories) {
+      if (!category.parentId) continue
+      children.set(category.parentId, [...(children.get(category.parentId) ?? []), category])
+    }
+    return children
+  }, [categories])
+
   const filteredItems = useMemo(() => {
     let list = items
-    if (selectedCategory !== 'all') list = list.filter((i) => i.categoryId === selectedCategory)
+    if (selectedCategory !== 'all') {
+      const visibleIds = new Set([
+        selectedCategory,
+        ...(categoryChildren.get(selectedCategory)?.map((category) => category.id) ?? [])
+      ])
+      list = list.filter((item) => visibleIds.has(item.categoryId))
+    }
     if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      list = list.filter((i) => i.nameAr.toLowerCase().includes(q))
+      const query = search.trim().toLowerCase()
+      list = list.filter((item) => item.nameAr.toLowerCase().includes(query))
     }
     return list
-  }, [items, selectedCategory, search])
+  }, [categoryChildren, items, selectedCategory, search])
 
   const subtotal = orderSubtotal(cart)
   const total = orderTotal(subtotal)
@@ -199,51 +266,77 @@ export function PosPage(): React.ReactElement {
     }))
   }, [tables])
 
-  function addToCart(item: MenuItem, quantity = 1, unitPrice = item.price): void {
+  function cartKey(item: MenuItem, quantity: number, unitPrice: number, size?: MenuItemSizeOption): string {
+    if (item.isWeighted) return `${item.id}:w:${quantity.toFixed(3)}:${unitPrice.toFixed(4)}`
+    if (size) return `${item.id}:s:${size.id}`
+    return item.id
+  }
+
+  function addToCart(item: MenuItem, quantity = 1, unitPrice = item.price, size?: MenuItemSizeOption): void {
     if (unavailableItems.has(item.id)) return
-    const key = item.isWeighted ? `${item.id}:${quantity.toFixed(3)}:${unitPrice.toFixed(4)}` : item.id
+    const key = cartKey(item, quantity, unitPrice, size)
+    const mainLine: LocalCartLine = {
+      key,
+      menuItemId: item.id,
+      nameAr: item.nameAr,
+      unitPrice,
+      quantity,
+      sizeLabelAr: size?.labelAr,
+      unitLabel: item.isWeighted ? 'كجم' : undefined,
+      weightGrams: item.isWeighted ? Math.round(quantity * 1000) : undefined
+    }
+    const attachmentLines: LocalCartLine[] = (item.attachments ?? []).map((attachment) => ({
+      key: `${key}:att:${attachment.id}`,
+      parentKey: key,
+      menuItemId: `${item.id}:attachment:${attachment.id}`,
+      attachmentForMenuItemId: item.id,
+      nameAr: `+ ${attachment.nameAr}`,
+      unitPrice: attachment.price,
+      quantity
+    }))
+
     setCart((prev) => {
-      const existing = prev.find((l) => l.key === key)
+      const existing = prev.find((line) => line.key === key)
       if (existing) {
-        return prev.map((l) =>
-          l.key === key
-            ? { ...l, quantity: l.quantity + quantity, weightGrams: item.isWeighted ? Math.round((l.quantity + quantity) * 1000) : undefined }
-            : l
-        )
+        return prev.map((line) => {
+          if (line.key === key || line.parentKey === key) {
+            const nextQty = line.quantity + quantity
+            return {
+              ...line,
+              quantity: nextQty,
+              weightGrams: line.unitLabel ? Math.round(nextQty * 1000) : line.weightGrams
+            }
+          }
+          return line
+        })
       }
-      return [
-        ...prev,
-        {
-          key,
-          menuItemId: item.id,
-          nameAr: item.nameAr,
-          unitPrice,
-          quantity,
-          unitLabel: item.isWeighted ? 'كجم' : undefined,
-          weightGrams: item.isWeighted ? Math.round(quantity * 1000) : undefined
-        }
-      ]
+      return [...prev, mainLine, ...attachmentLines]
     })
   }
 
   function changeQty(key: string, delta: number): void {
-    setCart((prev) =>
-      prev.map((l) => {
-        const nextQty = Math.max(0, l.quantity + delta)
-        return {
-          ...l,
-          quantity: nextQty,
-          weightGrams: l.unitLabel ? Math.round(nextQty * 1000) : l.weightGrams
-        }
-      }).filter((l) => l.quantity > 0)
-    )
+    setCart((prev) => {
+      const target = prev.find((line) => line.key === key)
+      const affectedParentKey = target?.parentKey ? key : key
+      return prev
+        .map((line) => {
+          if (line.key !== affectedParentKey && line.parentKey !== affectedParentKey) return line
+          const nextQty = Math.max(0, line.quantity + delta)
+          return {
+            ...line,
+            quantity: nextQty,
+            weightGrams: line.unitLabel ? Math.round(nextQty * 1000) : line.weightGrams
+          }
+        })
+        .filter((line) => line.quantity > 0)
+    })
   }
 
   async function handleCheckout(method?: 'cash' | 'card'): Promise<void> {
     if (cart.length === 0) return
     if (orderType === 'dine_in') {
       if (!selectedTable) {
-        setMessage('اختر ترابيزة للطلب الصالة')
+        setMessage('اختر ترابيزة لطلب الصالة')
         return
       }
       if (occupiedTableIds.has(selectedTable.id)) {
@@ -283,9 +376,11 @@ export function PosPage(): React.ReactElement {
       setMessage(
         orderType === 'dine_in'
           ? `تم إنشاء طلب صالة غير مدفوع #${orderReference(order)}`
-          : `تم إتمام الطلب #${orderReference(order)}`
+          : orderType === 'delivery'
+            ? `تم إنشاء طلب دليفري غير مدفوع #${orderReference(order)}`
+            : `تم إتمام الطلب #${orderReference(order)}`
       )
-      if (order.paymentStatus !== 'unpaid') {
+      if (orderType === 'takeaway' || orderType === 'delivery') {
         printReceipt(order, orderItems, settings).catch((e) => console.warn('[print]', e))
       }
     } catch (e) {
@@ -298,6 +393,7 @@ export function PosPage(): React.ReactElement {
       setLoading(false)
     }
   }
+
   async function handleCloseShift(): Promise<void> {
     const shift = await getOpenShiftForCashier(user.id)
     if (!shift) { setMessage('لا يوجد شيفت مفتوح'); return }
@@ -311,8 +407,16 @@ export function PosPage(): React.ReactElement {
         <input className="pos-search" placeholder="بحث في القائمة..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="pos-categories">
           <button type="button" className={`pos-cat-btn ${selectedCategory === 'all' ? 'active' : ''}`} onClick={() => setSelectedCategory('all')}>الكل</button>
-          {categories.map((c) => (
-            <button key={c.id} type="button" className={`pos-cat-btn ${selectedCategory === c.id ? 'active' : ''}`} onClick={() => setSelectedCategory(c.id)}>{c.nameAr}</button>
+          {categories.filter((category) => !category.parentId).map((category) => (
+            <div key={category.id} className="pos-category-group">
+              <button type="button" className={`pos-cat-btn ${selectedCategory === category.id ? 'active' : ''}`} onClick={() => setSelectedCategory(category.id)}>{category.nameAr}</button>
+              {categoryChildren.get(category.id)?.map((child) => (
+                <button key={child.id} type="button" className={`pos-cat-btn ${selectedCategory === child.id ? 'active' : ''}`} onClick={() => setSelectedCategory(child.id)}>{child.nameAr}</button>
+              ))}
+            </div>
+          ))}
+          {categories.filter((category) => category.parentId && !categories.some((parent) => parent.id === category.parentId)).map((category) => (
+            <button key={category.id} type="button" className={`pos-cat-btn ${selectedCategory === category.id ? 'active' : ''}`} onClick={() => setSelectedCategory(category.id)}>{category.nameAr}</button>
           ))}
         </div>
 
@@ -321,11 +425,14 @@ export function PosPage(): React.ReactElement {
             const outReason = unavailableItems.get(item.id)
             const isUnavailable = !!outReason
             const isLow = !isUnavailable && lowStockItems.has(item.id)
+            const hasSizes = !item.isWeighted && (item.sizeOptions?.length ?? 0) > 0
             const priceLabel = item.isWeighted
               ? item.allowCustomWeight
                 ? `${(item.customWeightUnitPrice ?? item.price).toFixed(2)} / كجم مخصص`
                 : 'أسعار محددة'
-              : item.price.toFixed(2)
+              : hasSizes
+                ? 'أحجام'
+                : item.price.toFixed(2)
 
             return (
               <div key={item.id} className={`pos-item-wrap${isUnavailable ? ' pos-item-wrap--unavailable' : ''}${isLow ? ' pos-item-wrap--low' : ''}`}>
@@ -335,12 +442,10 @@ export function PosPage(): React.ReactElement {
                   disabled={isUnavailable}
                   onClick={(e) => {
                     if (isUnavailable) return
-                    if (item.isWeighted) {
-                      const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
-                      setWeightPopup({ item, rect })
-                    } else {
-                      addToCart(item)
-                    }
+                    const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                    if (item.isWeighted) setWeightPopup({ item, rect })
+                    else if (hasSizes) setSizePopup({ item, rect })
+                    else addToCart(item)
                   }}
                 >
                   {item.nameAr}
@@ -364,6 +469,14 @@ export function PosPage(): React.ReactElement {
           anchor={weightPopup.rect}
           onSelect={(kg, unitPrice) => addToCart(weightPopup.item, kg, unitPrice)}
           onClose={() => setWeightPopup(null)}
+        />
+      )}
+      {sizePopup && (
+        <SizePopup
+          item={sizePopup.item}
+          anchor={sizePopup.rect}
+          onSelect={(size) => addToCart(sizePopup.item, 1, size.price, size)}
+          onClose={() => setSizePopup(null)}
         />
       )}
 
@@ -434,6 +547,13 @@ export function PosPage(): React.ReactElement {
             >
               صالة
             </button>
+            <button
+              type="button"
+              className={`order-type-toggle__btn${orderType === 'delivery' ? ' order-type-toggle__btn--active' : ''}`}
+              onClick={() => setOrderType('delivery')}
+            >
+              دليفري
+            </button>
           </div>
           {orderType === 'dine_in' && (
             <button
@@ -451,20 +571,21 @@ export function PosPage(): React.ReactElement {
           )}
         </div>
         <div className="pos-cart__lines">
-          {cart.length === 0 && <p style={{ textAlign: 'center', color: 'var(--color-muted)', padding: 16 }}>أضف أصنافاً من القائمة</p>}
+          {cart.length === 0 && <p style={{ textAlign: 'center', color: 'var(--color-muted)', padding: 16 }}>أضف أصنافًا من القائمة</p>}
           {cart.map((line) => (
-            <div key={line.key} className="cart-line">
+            <div key={line.key} className={`cart-line${line.parentKey ? ' cart-line--attachment' : ''}`}>
               <div>
                 <div className="cart-line__name">{line.nameAr}</div>
                 <div>
                   {lineTotal(line.unitPrice, line.quantity).toFixed(2)}
+                  {line.sizeLabelAr && <span style={{ color: 'var(--color-muted)', marginInlineStart: 6 }}>({line.sizeLabelAr})</span>}
                   {line.unitLabel && <span style={{ color: 'var(--color-muted)', marginInlineStart: 6 }}>({line.quantity.toFixed(3)} {line.unitLabel})</span>}
                 </div>
               </div>
               <div className="cart-line__controls">
-                <button type="button" className="qty-btn" onClick={() => changeQty(line.key, -1)}>−</button>
+                {!line.parentKey && <button type="button" className="qty-btn" onClick={() => changeQty(line.key, -1)}>-</button>}
                 <span>{line.unitLabel ? line.quantity.toFixed(2) : line.quantity}</span>
-                <button type="button" className="qty-btn" onClick={() => changeQty(line.key, 1)}>+</button>
+                {!line.parentKey && <button type="button" className="qty-btn" onClick={() => changeQty(line.key, 1)}>+</button>}
               </div>
             </div>
           ))}
@@ -484,9 +605,13 @@ export function PosPage(): React.ReactElement {
                 <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('cash')}>نقدي</button>
                 <button type="button" className="btn btn--secondary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('card')}>بطاقة</button>
               </>
-            ) : (
+            ) : orderType === 'dine_in' ? (
               <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0 || !selectedTable} onClick={() => void handleCheckout()}>
                 إنشاء طلب صالة
+              </button>
+            ) : (
+              <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout()}>
+                إنشاء طلب دليفري
               </button>
             )}
           </div>

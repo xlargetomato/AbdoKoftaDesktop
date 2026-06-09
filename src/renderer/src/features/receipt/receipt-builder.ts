@@ -8,12 +8,12 @@ export function buildReceiptHtml(
 ): string {
   const rows = items
     .map(
-      (i) => `
+      (item) => `
     <tr>
-      <td>${escapeHtml(i.nameAr)}</td>
-      <td>${i.quantity}</td>
-      <td>${formatMoney(i.unitPrice, settings)}</td>
-      <td>${formatMoney(i.lineTotal, settings)}</td>
+      <td>${escapeHtml(item.nameAr)}${item.sizeLabelAr ? `<br/><small>${escapeHtml(item.sizeLabelAr)}</small>` : ''}</td>
+      <td>${item.quantity}</td>
+      <td>${formatMoney(item.unitPrice, settings)}</td>
+      <td>${formatMoney(item.lineTotal, settings)}</td>
     </tr>`
     )
     .join('')
@@ -28,6 +28,7 @@ export function buildReceiptHtml(
     .restaurant-info { text-align: center; margin: 0 0 10px; font-size: 11px; color: #444; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 4px; text-align: right; border-bottom: 1px dashed #ccc; }
+    small { color: #555; }
     .totals { margin-top: 12px; }
     .totals div { display: flex; justify-content: space-between; margin: 4px 0; }
     .footer { text-align: center; margin-top: 16px; font-size: 10px; color: #666; }
@@ -36,11 +37,13 @@ export function buildReceiptHtml(
 </head>
 <body>
   <h1>${escapeHtml(settings.restaurantNameAr)}</h1>
-  ${settings.phoneNumber ? `<p class="restaurant-info">📞 ${escapeHtml(settings.phoneNumber)}</p>` : ''}
+  ${settings.phoneNumber ? `<p class="restaurant-info">${escapeHtml(settings.phoneNumber)}</p>` : ''}
   <hr/>
   <p>طلب رقم: <strong>${escapeHtml(orderReference(order))}</strong></p>
   <p>${new Date(order.completedAt ?? order.createdAt).toLocaleString('ar-EG')}</p>
   <p>الكاشير: ${escapeHtml(order.cashierName)}</p>
+  <p>النوع: ${escapeHtml(orderTypeLabel(order))}</p>
+  <p>الدفع: ${escapeHtml(paymentLabel(order))}</p>
   <table>
     <thead>
       <tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr>
@@ -59,6 +62,21 @@ function formatMoney(amount: number, settings: AppSettings): string {
   return `${amount.toFixed(2)} ${settings.currencySymbol}`
 }
 
+function orderTypeLabel(order: Order): string {
+  if (order.orderType === 'dine_in') {
+    return order.tableNameAr
+      ? `صالة - ${order.tableNameAr}${order.tableCategoryAr ? ` / ${order.tableCategoryAr}` : ''}`
+      : 'صالة'
+  }
+  if (order.orderType === 'delivery') return 'دليفري'
+  return 'تيك أواي'
+}
+
+function paymentLabel(order: Order): string {
+  if (order.status === 'cancelled') return 'ملغي'
+  return order.paymentStatus === 'unpaid' || order.status === 'draft' ? 'غير مدفوع' : 'مدفوع'
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -73,16 +91,14 @@ export async function printReceipt(
 ): Promise<boolean> {
   const html = buildReceiptHtml(order, items, settings)
 
-  // Use the globally typed electronAPI from the preload
   if (window.electronAPI?.printReceipt) {
     return window.electronAPI.printReceipt(html)
   }
 
-  // Fallback for non-Electron environments
-  const w = window.open('', '_blank', 'width=400,height=600')
-  if (!w) return false
-  w.document.write(html)
-  w.document.close()
-  w.print()
+  const receiptWindow = window.open('', '_blank', 'width=400,height=600')
+  if (!receiptWindow) return false
+  receiptWindow.document.write(html)
+  receiptWindow.document.close()
+  receiptWindow.print()
   return true
 }

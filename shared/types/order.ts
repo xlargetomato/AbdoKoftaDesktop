@@ -1,5 +1,5 @@
 export type OrderStatus = 'draft' | 'completed' | 'cancelled'
-export type OrderType = 'takeaway' | 'dine_in'
+export type OrderType = 'takeaway' | 'dine_in' | 'delivery'
 export type PaymentStatus = 'paid' | 'unpaid'
 
 export interface Order {
@@ -37,6 +37,8 @@ export interface OrderItem {
   nameAr: string
   unitPrice: number
   quantity: number
+  sizeLabelAr?: string
+  attachmentForMenuItemId?: string
   unitLabel?: string
   weightGrams?: number
   lineTotal: number

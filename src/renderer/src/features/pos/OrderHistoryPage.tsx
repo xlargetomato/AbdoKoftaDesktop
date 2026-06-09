@@ -26,6 +26,7 @@ function orderStatusLabel(order: Order): string {
 }
 
 function orderPlaceLabel(order: Order): string {
+  if (order.orderType === 'delivery') return 'دليفري'
   if (!order.tableNameAr) return 'تيك أواي'
   return `${order.tableNameAr}${order.tableCategoryAr ? ` - ${order.tableCategoryAr}` : ''}`
 }
@@ -235,6 +236,11 @@ export function OrderHistoryPage(): React.ReactElement {
                   <tr key={item.id}>
                     <td>
                       {item.nameAr}
+                      {item.sizeLabelAr && (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
+                          {item.sizeLabelAr}
+                        </div>
+                      )}
                       {item.noteAr && (
                         <div style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>
                           {item.noteAr}

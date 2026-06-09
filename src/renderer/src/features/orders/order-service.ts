@@ -43,6 +43,8 @@ export interface CartLine {
   nameAr: string
   unitPrice: number
   quantity: number
+  sizeLabelAr?: string
+  attachmentForMenuItemId?: string
   unitLabel?: string
   weightGrams?: number
   noteAr?: string
@@ -177,6 +179,8 @@ async function _completeOrder(params: CompleteOrderParams, offlineOnly = false):
       nameAr: line.nameAr,
       unitPrice: line.unitPrice,
       quantity: line.quantity,
+      sizeLabelAr: line.sizeLabelAr,
+      attachmentForMenuItemId: line.attachmentForMenuItemId,
       unitLabel: line.unitLabel,
       weightGrams: line.weightGrams,
       lineTotal: lineTotal(line.unitPrice, line.quantity),
@@ -585,6 +589,15 @@ export async function listUnpaidDineInOrders(): Promise<Order[]> {
   return orders.filter((order) =>
     order.status !== 'cancelled' &&
     (order.orderType ?? 'takeaway') === 'dine_in' &&
+    (order.paymentStatus === 'unpaid' || order.status === 'draft')
+  )
+}
+
+export async function listUnpaidDeferredOrders(): Promise<Order[]> {
+  const orders = await listOrders(1000)
+  return orders.filter((order) =>
+    order.status !== 'cancelled' &&
+    ((order.orderType ?? 'takeaway') === 'dine_in' || order.orderType === 'delivery') &&
     (order.paymentStatus === 'unpaid' || order.status === 'draft')
   )
 }

@@ -46,12 +46,14 @@ export async function listCategories(): Promise<MenuCategory[]> {
 
 export async function createCategory(
   nameAr: string,
-  sortOrder: number
+  sortOrder: number,
+  parentId?: string
 ): Promise<MenuCategory> {
   const now = Date.now()
   const id = generateId()
   const cat: MenuCategory = {
     id,
+    parentId,
     nameAr,
     sortOrder,
     active: true,
@@ -72,7 +74,7 @@ export async function createCategory(
 
 export async function updateCategory(
   id: string,
-  patch: Partial<Pick<MenuCategory, 'nameAr' | 'sortOrder' | 'active'>>
+  patch: Partial<Pick<MenuCategory, 'nameAr' | 'parentId' | 'sortOrder' | 'active'>>
 ): Promise<void> {
   if (isAppOffline()) {
     const cached = await getCachedDoc<MenuCategory>(COLLECTIONS.menuCategories, id)
@@ -87,7 +89,7 @@ export async function updateCategory(
 
 export async function updateMenuItem(
   id: string,
-  patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'isWeighted' | 'weightedPriceOptions' | 'allowCustomWeight' | 'customWeightUnitPrice' | 'active'>>
+  patch: Partial<Pick<MenuItem, 'nameAr' | 'price' | 'categoryId' | 'sizeOptions' | 'attachments' | 'isWeighted' | 'weightedPriceOptions' | 'allowCustomWeight' | 'customWeightUnitPrice' | 'active'>>
 ): Promise<void> {
   if (isAppOffline()) {
     const cached = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, id)
@@ -229,6 +231,8 @@ export async function createMenuItemWithRecipe(params: {
   nameAr: string
   descriptionAr?: string
   price: number
+  sizeOptions?: MenuItem['sizeOptions']
+  attachments?: MenuItem['attachments']
   isWeighted?: boolean
   weightedPriceOptions?: MenuItem['weightedPriceOptions']
   allowCustomWeight?: boolean
@@ -257,6 +261,8 @@ export async function createMenuItemWithRecipe(params: {
     nameAr: params.nameAr,
     descriptionAr: params.descriptionAr,
     price: params.price,
+    sizeOptions: params.sizeOptions,
+    attachments: params.attachments,
     isWeighted: params.isWeighted,
     weightedPriceOptions: params.isWeighted ? params.weightedPriceOptions : undefined,
     allowCustomWeight: params.isWeighted ? params.allowCustomWeight : undefined,
