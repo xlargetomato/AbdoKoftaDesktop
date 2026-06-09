@@ -9,6 +9,7 @@ export const COLLECTIONS = {
   orders: 'orders',
   orderItems: 'order_items',
   payments: 'payments',
+  diningTables: 'dining_tables',
   shifts: 'shifts',
   cashDrawerTransactions: 'cash_drawer_transactions',
   suppliers: 'suppliers',

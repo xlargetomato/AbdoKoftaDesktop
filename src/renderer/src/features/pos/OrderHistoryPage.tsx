@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Order, OrderItem } from '@shared/types'
-import { cancelOrder, listOrders, getOrderItems, getSettings } from '@renderer/features/orders/order-service'
+import { cancelOrder, listOrders, getOrderItems, getSettings, markOrderPaid } from '@renderer/features/orders/order-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
 import { orderReference } from '@shared/services/order-reference'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
@@ -20,7 +20,7 @@ export function OrderHistoryPage(): React.ReactElement {
 
   async function load(): Promise<void> {
     const o = await listOrders(100)
-    setOrders(o.filter((x) => x.status === 'completed' || x.status === 'cancelled'))
+    setOrders(o.filter((x) => x.status === 'draft' || x.status === 'completed' || x.status === 'cancelled'))
     setLoading(false)
   }
 
@@ -45,76 +45,108 @@ export function OrderHistoryPage(): React.ReactElement {
 
   async function handleCancel(order: Order): Promise<void> {
     const wasted = window.confirm(
-      'هل يعتبر مخزون هذا الطلب هدر؟\nOK = هدر ولا يرجع للمخزون\nCancel = يرجع للمخزون'
+      'Ù‡Ù„ ÙŠØ¹ØªØ¨Ø± Ù…Ø®Ø²ÙˆÙ† Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨ Ù‡Ø¯Ø±ØŸ\nOK = Ù‡Ø¯Ø± ÙˆÙ„Ø§ ÙŠØ±Ø¬Ø¹ Ù„Ù„Ù…Ø®Ø²ÙˆÙ†\nCancel = ÙŠØ±Ø¬Ø¹ Ù„Ù„Ù…Ø®Ø²ÙˆÙ†'
     )
-    const reasonAr = window.prompt('سبب الإلغاء', '') ?? undefined
+    const reasonAr = window.prompt('Ø³Ø¨Ø¨ Ø§Ù„Ø¥Ù„ØºØ§Ø¡', '') ?? undefined
     await cancelOrder({
       orderId: order.id,
       cancelledBy: user.id,
       reasonAr,
       inventoryMode: wasted ? 'waste' : 'return'
     })
-    setMessage('تم إلغاء الطلب')
+    setMessage('ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø·Ù„Ø¨')
     await load()
   }
 
-  if (loading) return <p className="app-loading">جاري التحميل...</p>
+  async function handleMarkPaid(order: Order, paymentMethod: 'cash' | 'card'): Promise<void> {
+    const paid = await markOrderPaid({
+      orderId: order.id,
+      cashierId: user.id,
+      paymentMethod
+    })
+    if (!paid) return
+    const [items, settings] = await Promise.all([
+      getOrderItems(paid.id),
+      getSettings()
+    ])
+    setMessage('ØªÙ… ØªØ³Ø¬ÙŠÙ„ Ø¯ÙØ¹ Ø§Ù„Ø·Ù„Ø¨')
+    await load()
+    await printReceipt(paid, items, settings)
+  }
+  if (loading) return <p className="app-loading">Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...</p>
 
-  const cur = 'ج.م'
+  const cur = 'Ø¬.Ù…'
 
   return (
     <>
       <div className="card">
-        <h2 className="card__title">سجل الطلبات</h2>
+        <h2 className="card__title">Ø³Ø¬Ù„ Ø§Ù„Ø·Ù„Ø¨Ø§Øª</h2>
         {message && <p className="form-message form-message--ok">{message}</p>}
         <table className="data-table">
           <thead>
             <tr>
-              <th>رقم الطلب</th>
-              <th>Status</th>
-              <th>التاريخ</th>
-              <th>الكاشير</th>
-              <th>الإجمالي</th>
+              <th>Ø±Ù‚Ù… Ø§Ù„Ø·Ù„Ø¨</th>
+              <th>Ø§Ù„Ø­Ø§Ù„Ø©</th>
+              <th>Ø§Ù„ØªØ±Ø§Ø¨ÙŠØ²Ø©</th>
+              <th>Ø§Ù„ØªØ§Ø±ÙŠØ®</th>
+              <th>Ø§Ù„ÙƒØ§Ø´ÙŠØ±</th>
+              <th>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {orders.map((o) => (
-              <tr key={o.id}>
-                <td>#{orderReference(o)}</td>
-                <td>{o.status === 'cancelled' ? 'Cancelled' : 'Completed'}</td>
-                <td>{new Date(o.completedAt ?? o.createdAt).toLocaleString('ar-EG')}</td>
-                <td>{o.cashierName}</td>
-                <td>{o.total.toFixed(2)} {cur}</td>
-                <td>
-                  <div className="table-actions">
-                    <button
-                      type="button"
-                      className="btn btn--secondary btn--sm"
-                      onClick={() => void openDetails(o)}
-                      disabled={loadingDetails}
-                    >
-                      تفاصيل
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--secondary btn--sm"
-                      onClick={() => void reprint(o)}
-                    >
-                      طباعة
-                    </button>
-                    {o.status === 'completed' && (
-                      <button type="button" className="btn btn--danger btn--sm" onClick={() => void handleCancel(o)}>Cancel</button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {orders.map((o) => {
+              const unpaid = o.status === 'draft' || o.paymentStatus === 'unpaid'
+              return (
+                <tr key={o.id} className={unpaid ? 'order-row--unpaid' : ''}>
+                  <td>#{orderReference(o)}</td>
+                  <td>
+                    <span className={`order-status-pill${unpaid ? ' order-status-pill--unpaid' : ''}`}>
+                      {o.status === 'cancelled' ? 'Ù…Ù„ØºÙŠ' : unpaid ? 'ØºÙŠØ± Ù…Ø¯ÙÙˆØ¹' : 'Ù…Ø¯ÙÙˆØ¹'}
+                    </span>
+                  </td>
+                  <td>{o.tableNameAr ? `${o.tableNameAr}${o.tableCategoryAr ? ` - ${o.tableCategoryAr}` : ''}` : 'ØªÙŠÙƒ Ø£ÙˆØ§ÙŠ'}</td>
+                  <td>{new Date(o.completedAt ?? o.createdAt).toLocaleString('ar-EG')}</td>
+                  <td>{o.cashierName}</td>
+                  <td>{o.total.toFixed(2)} {cur}</td>
+                  <td>
+                    <div className="table-actions">
+                      <button
+                        type="button"
+                        className="btn btn--secondary btn--sm"
+                        onClick={() => void openDetails(o)}
+                        disabled={loadingDetails}
+                      >
+                        ØªÙØ§ØµÙŠÙ„
+                      </button>
+                      {!unpaid && (
+                        <button
+                          type="button"
+                          className="btn btn--secondary btn--sm"
+                          onClick={() => void reprint(o)}
+                        >
+                          Ø·Ø¨Ø§Ø¹Ø©
+                        </button>
+                      )}
+                      {unpaid && o.status !== 'cancelled' && (
+                        <>
+                          <button type="button" className="btn btn--primary btn--sm" onClick={() => void handleMarkPaid(o, 'cash')}>Ø¯ÙØ¹ Ù†Ù‚Ø¯ÙŠ</button>
+                          <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleMarkPaid(o, 'card')}>Ø¯ÙØ¹ Ø¨Ø·Ø§Ù‚Ø©</button>
+                        </>
+                      )}
+                      {o.status !== 'cancelled' && (
+                        <button type="button" className="btn btn--danger btn--sm" onClick={() => void handleCancel(o)}>Cancel</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* ── Order details modal ── */}
+      {/* â”€â”€ Order details modal â”€â”€ */}
       {details && (
         <div className="modal-overlay" onClick={() => setDetails(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -122,31 +154,39 @@ export function OrderHistoryPage(): React.ReactElement {
             {/* Header */}
             <div className="order-details__header">
               <h2 className="order-details__title">
-                طلب #{orderReference(details.order)}
+                Ø·Ù„Ø¨ #{orderReference(details.order)}
               </h2>
               <button
                 type="button"
                 className="order-details__close"
                 onClick={() => setDetails(null)}
-                aria-label="إغلاق"
+                aria-label="Ø¥ØºÙ„Ø§Ù‚"
               >
-                ✕
+                âœ•
               </button>
             </div>
 
             {/* Meta */}
             <div className="order-details__meta">
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">التاريخ</span>
+                <span className="order-details__meta-label">Ø§Ù„ØªØ§Ø±ÙŠØ®</span>
                 <span>{new Date(details.order.completedAt ?? details.order.createdAt).toLocaleString('ar-EG')}</span>
               </div>
               <div className="order-details__meta-row">
-                <span className="order-details__meta-label">الكاشير</span>
+                <span className="order-details__meta-label">Ø§Ù„ÙƒØ§Ø´ÙŠØ±</span>
                 <span>{details.order.cashierName}</span>
+              </div>
+              <div className="order-details__meta-row">
+                <span className="order-details__meta-label">Ø§Ù„Ù†ÙˆØ¹</span>
+                <span>{details.order.tableNameAr ? `${details.order.tableNameAr}${details.order.tableCategoryAr ? ` - ${details.order.tableCategoryAr}` : ''}` : 'ØªÙŠÙƒ Ø£ÙˆØ§ÙŠ'}</span>
+              </div>
+              <div className="order-details__meta-row">
+                <span className="order-details__meta-label">Ø§Ù„Ø¯ÙØ¹</span>
+                <span>{details.order.status === 'draft' || details.order.paymentStatus === 'unpaid' ? 'ØºÙŠØ± Ù…Ø¯ÙÙˆØ¹' : details.order.status === 'cancelled' ? 'Ù…Ù„ØºÙŠ' : 'Ù…Ø¯ÙÙˆØ¹'}</span>
               </div>
               {details.order.noteAr && (
                 <div className="order-details__meta-row">
-                  <span className="order-details__meta-label">ملاحظة</span>
+                  <span className="order-details__meta-label">Ù…Ù„Ø§Ø­Ø¸Ø©</span>
                   <span>{details.order.noteAr}</span>
                 </div>
               )}
@@ -156,10 +196,10 @@ export function OrderHistoryPage(): React.ReactElement {
             <table className="data-table" style={{ marginTop: 12 }}>
               <thead>
                 <tr>
-                  <th>الصنف</th>
-                  <th>الكمية</th>
-                  <th>سعر الوحدة</th>
-                  <th>الإجمالي</th>
+                  <th>Ø§Ù„ØµÙ†Ù</th>
+                  <th>Ø§Ù„ÙƒÙ…ÙŠØ©</th>
+                  <th>Ø³Ø¹Ø± Ø§Ù„ÙˆØ­Ø¯Ø©</th>
+                  <th>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</th>
                 </tr>
               </thead>
               <tbody>
@@ -184,7 +224,7 @@ export function OrderHistoryPage(): React.ReactElement {
             {/* Totals */}
             <div className="order-details__totals">
               <div className="order-details__total-row">
-                <span>الإجمالي</span>
+                <span>Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ</span>
                 <strong>{details.order.total.toFixed(2)} {cur}</strong>
               </div>
             </div>
@@ -196,14 +236,14 @@ export function OrderHistoryPage(): React.ReactElement {
                 className="btn btn--primary btn--sm"
                 onClick={() => void reprint(details.order)}
               >
-                طباعة الإيصال
+                Ø·Ø¨Ø§Ø¹Ø© Ø§Ù„Ø¥ÙŠØµØ§Ù„
               </button>
               <button
                 type="button"
                 className="btn btn--secondary btn--sm"
                 onClick={() => setDetails(null)}
               >
-                إغلاق
+                Ø¥ØºÙ„Ø§Ù‚
               </button>
             </div>
           </div>

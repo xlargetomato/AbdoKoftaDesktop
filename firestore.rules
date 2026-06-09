@@ -85,6 +85,10 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create: if isCashier() || isManager();
     }
+    match /dining_tables/{id} {
+      allow read: if isStaff();
+      allow write: if isManager();
+    }
     match /settings/{id} {
       allow read: if isStaff();
       allow create, delete: if isManager();

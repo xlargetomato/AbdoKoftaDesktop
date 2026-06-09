@@ -1,10 +1,17 @@
 export type OrderStatus = 'draft' | 'completed' | 'cancelled'
+export type OrderType = 'takeaway' | 'dine_in'
+export type PaymentStatus = 'paid' | 'unpaid'
 
 export interface Order {
   id: string
   orderNumber: number
   orderCode?: string
   status: OrderStatus
+  orderType?: OrderType
+  paymentStatus?: PaymentStatus
+  tableId?: string
+  tableNameAr?: string
+  tableCategoryAr?: string
   shiftId?: string
   cashierId: string
   cashierName: string
@@ -16,6 +23,7 @@ export interface Order {
   createdAt: number
   updatedAt: number
   completedAt?: number
+  paidAt?: number
   cancelledAt?: number
   cancelledBy?: string
   cancelReasonAr?: string

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
-import type { MenuCategory, MenuItem } from '@shared/types'
+import type { DiningTable, MenuCategory, MenuItem, Order } from '@shared/types'
 import { getIngredientStocks } from '@renderer/features/inventory/inventory-service'
 import { listCategories, listMenuItems, getRecipeByMenuItem } from '@renderer/features/menu/menu-service'
 import {
   completeOrder,
   getSettings,
+  listUnpaidDineInOrders,
   type CartLine
 } from '@renderer/features/orders/order-service'
 import { getOrderItems } from '@renderer/features/orders/order-service'
+import { listDiningTables } from '@renderer/features/tables/table-service'
 import { printReceipt } from '@renderer/features/receipt/receipt-builder'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
 import {
@@ -113,19 +115,28 @@ export function PosPage(): React.ReactElement {
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<LocalCartLine[]>([])
+  const [orderType, setOrderType] = useState<'takeaway' | 'dine_in'>('takeaway')
+  const [tables, setTables] = useState<DiningTable[]>([])
+  const [unpaidOrders, setUnpaidOrders] = useState<Order[]>([])
+  const [selectedTableId, setSelectedTableId] = useState('')
   const [orderNote, setOrderNote] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [weightPopup, setWeightPopup] = useState<{ item: MenuItem; rect: DOMRect } | null>(null)
 
   const load = useCallback(async () => {
-    const [cats, menu, stocks] = await Promise.all([
+    const [cats, menu, stocks, diningTables, unpaid] = await Promise.all([
       listCategories(),
       listMenuItems(true),
-      getIngredientStocks()
+      getIngredientStocks(),
+      listDiningTables(),
+      listUnpaidDineInOrders()
     ])
     setCategories(cats.filter((c) => c.active))
     setItems(menu)
+    setTables(diningTables)
+    setUnpaidOrders(unpaid)
+    if (diningTables.length > 0) setSelectedTableId((prev) => prev || diningTables[0]!.id)
 
     const outOfStock = new Map<string, string>()
     const lowStock = new Set<string>()
@@ -167,6 +178,14 @@ export function PosPage(): React.ReactElement {
 
   const subtotal = orderSubtotal(cart)
   const total = orderTotal(subtotal)
+  const occupiedTableIds = useMemo(
+    () => new Set(unpaidOrders.map((order) => order.tableId).filter(Boolean) as string[]),
+    [unpaidOrders]
+  )
+  const selectedTable = useMemo(
+    () => tables.find((table) => table.id === selectedTableId),
+    [tables, selectedTableId]
+  )
 
   function addToCart(item: MenuItem, quantity = 1, unitPrice = item.price): void {
     if (unavailableItems.has(item.id)) return
@@ -208,8 +227,20 @@ export function PosPage(): React.ReactElement {
     )
   }
 
-  async function handleCheckout(method: 'cash' | 'card'): Promise<void> {
+  async function handleCheckout(method?: 'cash' | 'card'): Promise<void> {
     if (cart.length === 0) return
+    if (orderType === 'dine_in') {
+      if (!selectedTable) {
+        setMessage('اختر ترابيزة للطلب الصالة')
+        return
+      }
+      if (occupiedTableIds.has(selectedTable.id)) {
+        const shouldContinue = window.confirm(
+          `الترابيزة ${selectedTable.nameAr} عليها طلب غير مدفوع. هل تريد إضافة طلب جديد عليها؟`
+        )
+        if (!shouldContinue) return
+      }
+    }
     setLoading(true)
     setMessage('')
     try {
@@ -219,13 +250,32 @@ export function PosPage(): React.ReactElement {
         cashierCode: user.cashierCode,
         lines: cart,
         orderNoteAr: orderNote || undefined,
+        orderType,
+        table: orderType === 'dine_in' && selectedTable
+          ? {
+              id: selectedTable.id,
+              nameAr: selectedTable.nameAr,
+              categoryAr: selectedTable.categoryAr
+            }
+          : undefined,
         paymentMethod: method
       })
-      const [orderItems, settings] = await Promise.all([getOrderItems(order.id), getSettings()])
+      const [orderItems, settings, unpaid] = await Promise.all([
+        getOrderItems(order.id),
+        getSettings(),
+        listUnpaidDineInOrders()
+      ])
       setCart([])
       setOrderNote('')
-      setMessage(`تم إتمام الطلب #${orderReference(order)}`)
-      printReceipt(order, orderItems, settings).catch((e) => console.warn('[print]', e))
+      setUnpaidOrders(unpaid)
+      setMessage(
+        orderType === 'dine_in'
+          ? `تم إنشاء طلب صالة غير مدفوع #${orderReference(order)}`
+          : `تم إتمام الطلب #${orderReference(order)}`
+      )
+      if (order.paymentStatus !== 'unpaid') {
+        printReceipt(order, orderItems, settings).catch((e) => console.warn('[print]', e))
+      }
     } catch (e) {
       const code = (e as { code?: string }).code
       setMessage(code === 'permission-denied'
@@ -236,7 +286,6 @@ export function PosPage(): React.ReactElement {
       setLoading(false)
     }
   }
-
   async function handleCloseShift(): Promise<void> {
     const shift = await getOpenShiftForCashier(user.id)
     if (!shift) { setMessage('لا يوجد شيفت مفتوح'); return }
@@ -308,6 +357,47 @@ export function PosPage(): React.ReactElement {
 
       <aside className="pos-cart">
         <div className="pos-cart__header">الطلب</div>
+        <div className="order-service-panel">
+          <div className="order-type-toggle">
+            <button
+              type="button"
+              className={`order-type-toggle__btn${orderType === 'takeaway' ? ' order-type-toggle__btn--active' : ''}`}
+              onClick={() => setOrderType('takeaway')}
+            >
+              تيك أواي
+            </button>
+            <button
+              type="button"
+              className={`order-type-toggle__btn${orderType === 'dine_in' ? ' order-type-toggle__btn--active' : ''}`}
+              onClick={() => setOrderType('dine_in')}
+            >
+              صالة
+            </button>
+          </div>
+          {orderType === 'dine_in' && (
+            <div className="table-picker">
+              {tables.length === 0 ? (
+                <p className="table-picker__empty">لا توجد ترابيزات مفعلة</p>
+              ) : (
+                tables.map((table) => {
+                  const occupied = occupiedTableIds.has(table.id)
+                  return (
+                    <button
+                      key={table.id}
+                      type="button"
+                      className={`table-picker__btn${selectedTableId === table.id ? ' table-picker__btn--active' : ''}${occupied ? ' table-picker__btn--occupied' : ''}`}
+                      onClick={() => setSelectedTableId(table.id)}
+                      title={occupied ? 'عليها طلب غير مدفوع' : undefined}
+                    >
+                      <strong>{table.nameAr}</strong>
+                      {table.categoryAr && <span>{table.categoryAr}</span>}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
+        </div>
         <div className="pos-cart__lines">
           {cart.length === 0 && <p style={{ textAlign: 'center', color: 'var(--color-muted)', padding: 16 }}>أضف أصنافاً من القائمة</p>}
           {cart.map((line) => (
@@ -337,8 +427,16 @@ export function PosPage(): React.ReactElement {
           </div>
           {message && <p className={`form-message ${message.includes('فشل') || message.includes('مرفوضة') ? 'form-message--error' : 'form-message--ok'}`}>{message}</p>}
           <div className="checkout-actions">
-            <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('cash')}>نقدي</button>
-            <button type="button" className="btn btn--secondary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('card')}>بطاقة</button>
+            {orderType === 'takeaway' ? (
+              <>
+                <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('cash')}>نقدي</button>
+                <button type="button" className="btn btn--secondary" disabled={loading || cart.length === 0} onClick={() => void handleCheckout('card')}>بطاقة</button>
+              </>
+            ) : (
+              <button type="button" className="btn btn--primary" disabled={loading || cart.length === 0 || !selectedTable} onClick={() => void handleCheckout()}>
+                إنشاء طلب صالة
+              </button>
+            )}
           </div>
         </div>
       </aside>

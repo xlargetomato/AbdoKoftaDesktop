@@ -16,7 +16,7 @@ async function probeBackend(): Promise<boolean> {
         signal: controller.signal
       }
     )
-    return response.ok || response.status === 401 || response.status === 403
+    return response.type === 'opaque' || response.status > 0
   } catch {
     return false
   } finally {

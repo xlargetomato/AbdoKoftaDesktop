@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import type { AppSettings } from '@shared/types'
+import type { AppSettings, DiningTable } from '@shared/types'
 import { getSettings, updateSettings } from '@renderer/features/orders/order-service'
 import { applyThemeColor, DEFAULT_PRIMARY } from '@renderer/features/theme/theme-store'
 import { listUsersByRole, updateUserProfile } from '@renderer/features/auth/auth-service'
 import { hashPin } from '@renderer/features/auth/pin-store'
-import { MdSave, MdPalette, MdLock, MdPerson } from 'react-icons/md'
+import { listDiningTables, saveDiningTable, setDiningTableActive } from '@renderer/features/tables/table-service'
+import { MdSave, MdPalette, MdLock, MdPerson, MdTableRestaurant } from 'react-icons/md'
 import type { AppUser } from '@shared/types'
 
 const COLOR_PRESETS = [
@@ -31,6 +32,7 @@ const LOCK_OPTIONS = [
 export function SettingsPage(): React.ReactElement {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [cashiers, setCashiers] = useState<AppUser[]>([])
+  const [tables, setTables] = useState<DiningTable[]>([])
 
   // ── Receipt ─────────────────────────────────────────────────────────────
   const [receiptForm, setReceiptForm] = useState({ restaurantNameAr: '', currencySymbol: '', phoneNumber: '', receiptFooterAr: '' })
@@ -51,9 +53,12 @@ export function SettingsPage(): React.ReactElement {
   // Per-cashier PIN setting
   const [cashierPins, setCashierPins] = useState<Record<string, string>>({})
   const [pinSavingFor, setPinSavingFor] = useState<string | null>(null)
+  const [tableForm, setTableForm] = useState({ id: '', nameAr: '', categoryAr: '', sortOrder: '0' })
+  const [tableSaving, setTableSaving] = useState(false)
+  const [tableMsg, setTableMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    void Promise.all([getSettings(), listUsersByRole('cashier')]).then(([s, c]) => {
+    void Promise.all([getSettings(), listUsersByRole('cashier'), listDiningTables(true)]).then(([s, c, t]) => {
       setSettings(s)
       setReceiptForm({
         restaurantNameAr: s.restaurantNameAr,
@@ -67,6 +72,7 @@ export function SettingsPage(): React.ReactElement {
       setPinEnabled(s.pinEnabled ?? false)
       setAutoLockMinutes(s.autoLockMinutes ?? 5)
       setCashiers(c)
+      setTables(t)
     })
   }, [])
 
@@ -131,6 +137,43 @@ export function SettingsPage(): React.ReactElement {
     finally { setPinSavingFor(null) }
   }
 
+  async function reloadTables(): Promise<void> {
+    setTables(await listDiningTables(true))
+  }
+
+  async function handleTableSave(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    if (!tableForm.nameAr.trim()) return
+    setTableSaving(true)
+    setTableMsg(null)
+    try {
+      const existing = tables.find((table) => table.id === tableForm.id)
+      await saveDiningTable({
+        ...existing,
+        id: tableForm.id || undefined,
+        nameAr: tableForm.nameAr,
+        categoryAr: tableForm.categoryAr || undefined,
+        sortOrder: Number(tableForm.sortOrder) || 0,
+        active: existing?.active ?? true
+      })
+      setTableForm({ id: '', nameAr: '', categoryAr: '', sortOrder: '0' })
+      setTableMsg('تم حفظ الترابيزة')
+      await reloadTables()
+    } catch (e) {
+      setTableMsg(e instanceof Error ? e.message : 'فشل حفظ الترابيزة')
+    } finally {
+      setTableSaving(false)
+    }
+  }
+
+  function editTable(table: DiningTable): void {
+    setTableForm({
+      id: table.id,
+      nameAr: table.nameAr,
+      categoryAr: table.categoryAr ?? '',
+      sortOrder: String(table.sortOrder)
+    })
+  }
   if (!settings) return <p className="app-loading">جارٍ التحميل…</p>
 
   return (
@@ -165,6 +208,58 @@ export function SettingsPage(): React.ReactElement {
         </form>
       </div>
 
+      <div className="card settings-page__full">
+        <h2 className="card__title"><MdTableRestaurant style={{ verticalAlign: 'middle', marginLeft: 6 }} />ترابيزات الصالة</h2>
+        {tableMsg && <p className={`form-message ${tableMsg.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`}>{tableMsg}</p>}
+        <form className="table-manager-form" onSubmit={(e) => void handleTableSave(e)}>
+          <label className="field">
+            <span>اسم / رقم الترابيزة</span>
+            <input value={tableForm.nameAr} onChange={(e) => setTableForm((f) => ({ ...f, nameAr: e.target.value }))} placeholder="مثال: 1 أو VIP" required />
+          </label>
+          <label className="field">
+            <span>التصنيف</span>
+            <input value={tableForm.categoryAr} onChange={(e) => setTableForm((f) => ({ ...f, categoryAr: e.target.value }))} placeholder="داخلي / خارجي" />
+          </label>
+          <label className="field">
+            <span>الترتيب</span>
+            <input type="number" value={tableForm.sortOrder} onChange={(e) => setTableForm((f) => ({ ...f, sortOrder: e.target.value }))} />
+          </label>
+          <div className="form-actions table-manager-form__actions">
+            <button type="submit" className="btn btn--primary" disabled={tableSaving}>
+              <MdSave /> {tableSaving ? 'جارٍ الحفظ...' : tableForm.id ? 'تحديث الترابيزة' : 'إضافة ترابيزة'}
+            </button>
+            {tableForm.id && (
+              <button type="button" className="btn btn--secondary" onClick={() => setTableForm({ id: '', nameAr: '', categoryAr: '', sortOrder: '0' })}>
+                إلغاء التعديل
+              </button>
+            )}
+          </div>
+        </form>
+        <div className="table-manager-list">
+          {tables.length === 0 ? (
+            <p className="report-empty">لا توجد ترابيزات بعد</p>
+          ) : (
+            tables.map((table) => (
+              <div key={table.id} className={`table-manager-row${!table.active ? ' table-manager-row--inactive' : ''}`}>
+                <div>
+                  <strong>{table.nameAr}</strong>
+                  <span>{table.categoryAr || 'بدون تصنيف'} - ترتيب {table.sortOrder}</span>
+                </div>
+                <div className="table-actions">
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => editTable(table)}>تعديل</button>
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--sm"
+                    onClick={async () => { await setDiningTableActive(table.id, !table.active); await reloadTables() }}
+                  >
+                    {table.active ? 'إخفاء' : 'تفعيل'}
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
       {/* ── Theme card ── */}
       <div className="card">
         <h2 className="card__title"><MdPalette style={{ verticalAlign: 'middle', marginLeft: 6 }} />ألوان التطبيق</h2>

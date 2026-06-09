@@ -1,5 +1,6 @@
 const TERMINAL_KEY = 'abdokofta.terminalId'
 const LAST_ORDER_KEY = 'abdokofta.lastLocalOrderNumber'
+const SHIFT_ORDER_PREFIX = 'abdokofta.shiftOrderNumber.'
 
 function randomTerminalId(): string {
   const bytes = new Uint8Array(4)
@@ -29,5 +30,28 @@ export function nextLocalOrderReference(prefix?: string): {
   return {
     orderNumber,
     orderCode: `${terminalId}-${orderNumber}`
+  }
+}
+
+export function orderCodeForSequence(prefix: string | undefined, orderNumber: number): string {
+  const terminalId = (prefix?.trim() || getTerminalId()).toUpperCase()
+  return `${terminalId}-${String(orderNumber).padStart(6, '0')}`
+}
+
+export function nextLocalShiftOrderReference(
+  shiftId: string,
+  prefix: string | undefined,
+  minimumOrderNumber = 0
+): {
+  orderNumber: number
+  orderCode: string
+} {
+  const key = `${SHIFT_ORDER_PREFIX}${shiftId}`
+  const last = Number(localStorage.getItem(key) ?? '0')
+  const orderNumber = Math.max(last, minimumOrderNumber) + 1
+  localStorage.setItem(key, String(orderNumber))
+  return {
+    orderNumber,
+    orderCode: orderCodeForSequence(prefix, orderNumber)
   }
 }

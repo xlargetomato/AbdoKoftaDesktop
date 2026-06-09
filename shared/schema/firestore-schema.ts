@@ -11,6 +11,7 @@ import type {
   Order,
   OrderItem,
   Payment,
+  DiningTable,
   Recipe,
   AppSettings,
   Shift,
@@ -31,6 +32,7 @@ export interface FirestoreSchema {
   orders: FirestoreDoc<Order>
   order_items: FirestoreDoc<OrderItem>
   payments: FirestoreDoc<Payment>
+  dining_tables: FirestoreDoc<DiningTable>
   shifts: FirestoreDoc<Shift>
   cash_drawer_transactions: FirestoreDoc<CashDrawerTransaction>
   suppliers: FirestoreDoc<Supplier>
@@ -45,7 +47,9 @@ export const SETTINGS_DOC_ID = 'app'
 export const FIRESTORE_INDEX_HINTS = [
   'inventory_transactions: ingredientId ASC, createdAt DESC',
   'orders: status ASC, createdAt DESC',
+  'orders: shiftId ASC',
   'order_items: orderId ASC',
+  'dining_tables: sortOrder ASC',
   'menu_items: categoryId ASC, sortOrder ASC',
   'recipes: menuItemId ASC'
 ] as const
