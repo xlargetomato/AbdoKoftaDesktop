@@ -9,7 +9,12 @@ import { listInventoryTransactions } from '../inventory/inventory-service'
 import { listCashDrawerTransactions } from '../cash/cash-service'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDocs,
+  isAppOffline,
+  mergeAndCacheLocalFirst
+} from '@renderer/lib/offline/sqlite-cache'
 
 export interface ShiftSummary {
   shift: Shift
@@ -42,8 +47,9 @@ export async function listShifts(includeArchived = false): Promise<Shift[]> {
   } else {
     try {
       const snap = await getDocs(query(collections.shifts(), orderBy('openedAt', 'desc')))
-      shifts = snap.docs.map((d) => mapDoc<Shift>(d))
-      await cacheDocs(COLLECTIONS.shifts, shifts)
+      const remoteShifts = snap.docs.map((d) => mapDoc<Shift>(d))
+      shifts = await mergeAndCacheLocalFirst(COLLECTIONS.shifts, remoteShifts)
+      shifts = shifts.sort((a, b) => b.openedAt - a.openedAt)
     } catch (e) {
       shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
       if (!shifts.length) throw e
@@ -66,11 +72,9 @@ export async function getOpenShiftForCashier(cashierId: string): Promise<Shift |
         where('status', '==', 'open')
       )
     )
-    const first = snap.docs[0]
-    if (!first) return null
-    const shift = mapDoc<Shift>(first)
-    await cacheDocs(COLLECTIONS.shifts, [shift])
-    return shift
+    const remoteShifts = snap.docs.map((d) => mapDoc<Shift>(d))
+    const shifts = await mergeAndCacheLocalFirst(COLLECTIONS.shifts, remoteShifts)
+    return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
   } catch {
     const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
     return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null

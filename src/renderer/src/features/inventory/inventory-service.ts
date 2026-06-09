@@ -20,7 +20,12 @@ import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDocs,
+  isAppOffline,
+  mergeAndCacheLocalFirst
+} from '@renderer/lib/offline/sqlite-cache'
 
 export async function listIngredients(): Promise<Ingredient[]> {
   if (isAppOffline()) {
@@ -32,9 +37,10 @@ export async function listIngredients(): Promise<Ingredient[]> {
     const snap = await getDocs(
       query(collections.ingredients(), orderBy('nameAr'))
     )
-    const ingredients = snap.docs.map((d) => mapDoc<Ingredient>(d))
-    await cacheDocs(COLLECTIONS.ingredients, ingredients)
+    const remoteIngredients = snap.docs.map((d) => mapDoc<Ingredient>(d))
+    const ingredients = await mergeAndCacheLocalFirst(COLLECTIONS.ingredients, remoteIngredients)
     return ingredients
+      .sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
   } catch (e) {
     const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
     if (ingredients.length) return ingredients.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
@@ -155,9 +161,10 @@ export async function listInventoryTransactions(
       ? query(base, where('ingredientId', '==', ingredientId))
       : base
     const snap = await getDocs(q)
-    const transactions = snap.docs.map((d) => mapDoc<InventoryTransaction>(d))
-    await cacheDocs(COLLECTIONS.inventoryTransactions, transactions)
-    return transactions
+    const remoteTransactions = snap.docs.map((d) => mapDoc<InventoryTransaction>(d))
+    let transactions = await mergeAndCacheLocalFirst(COLLECTIONS.inventoryTransactions, remoteTransactions)
+    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
+    return transactions.sort((a, b) => b.createdAt - a.createdAt)
   } catch (e) {
     let transactions = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
     if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)

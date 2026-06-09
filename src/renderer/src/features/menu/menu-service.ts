@@ -18,7 +18,9 @@ import {
   cacheDocs,
   getCachedDoc,
   getCachedDocs,
-  isAppOffline
+  isAppOffline,
+  mergeAndCacheLocalFirst,
+  mergeDocAndCacheLocalFirst
 } from '@renderer/lib/offline/sqlite-cache'
 
 export async function listCategories(): Promise<MenuCategory[]> {
@@ -31,9 +33,10 @@ export async function listCategories(): Promise<MenuCategory[]> {
     const snap = await getDocs(
       query(collections.menuCategories(), orderBy('sortOrder'))
     )
-    const categories = snap.docs.map((d) => mapDoc<MenuCategory>(d))
-    await cacheDocs(COLLECTIONS.menuCategories, categories)
+    const remoteCategories = snap.docs.map((d) => mapDoc<MenuCategory>(d))
+    const categories = await mergeAndCacheLocalFirst(COLLECTIONS.menuCategories, remoteCategories)
     return categories
+      .sort((a, b) => a.sortOrder - b.sortOrder)
   } catch (e) {
     const categories = await getCachedDocs<MenuCategory>(COLLECTIONS.menuCategories)
     if (categories.length) return categories.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -123,8 +126,8 @@ export async function listMenuItems(activeOnly = false): Promise<MenuItem[]> {
   } else {
     try {
       const snap = await getDocs(collections.menuItems())
-      items = snap.docs.map((d) => mapDoc<MenuItem>(d))
-      await cacheDocs(COLLECTIONS.menuItems, items)
+      const remoteItems = snap.docs.map((d) => mapDoc<MenuItem>(d))
+      items = await mergeAndCacheLocalFirst(COLLECTIONS.menuItems, remoteItems)
     } catch (e) {
       items = await getCachedDocs<MenuItem>(COLLECTIONS.menuItems)
       if (!items.length) throw e
@@ -195,10 +198,9 @@ export async function getRecipeByMenuItem(
       where('menuItemId', '==', menuItemId)
     )
     const snap = await getDocs(q)
-    if (snap.empty) return null
-    const recipe = mapDoc<Recipe>(snap.docs[0]!)
-    await cacheDocs(COLLECTIONS.recipes, [recipe])
-    return recipe
+    const remoteRecipes = snap.docs.map((d) => mapDoc<Recipe>(d))
+    const recipes = await mergeAndCacheLocalFirst(COLLECTIONS.recipes, remoteRecipes)
+    return recipes.find((r) => r.menuItemId === menuItemId) ?? null
   } catch (e) {
     const recipes = await getCachedDocs<Recipe>(COLLECTIONS.recipes)
     const recipe = recipes.find((r) => r.menuItemId === menuItemId)
@@ -213,10 +215,8 @@ export async function getRecipe(recipeId: string): Promise<Recipe | null> {
   }
   try {
     const snap = await getDoc(doc(collections.recipes(), recipeId))
-    if (!snap.exists()) return null
-    const recipe = mapDoc<Recipe>(snap as never)
-    await cacheDocs(COLLECTIONS.recipes, [recipe])
-    return recipe
+    const recipe = snap.exists() ? mapDoc<Recipe>(snap as never) : null
+    return await mergeDocAndCacheLocalFirst(COLLECTIONS.recipes, recipe, recipeId)
   } catch (e) {
     const recipe = await getCachedDoc<Recipe>(COLLECTIONS.recipes, recipeId)
     if (recipe) return recipe

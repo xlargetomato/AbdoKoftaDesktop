@@ -5,7 +5,12 @@ import { collections, doc } from '@renderer/lib/firebase'
 import { generateId } from '@renderer/lib/utils/id'
 import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
-import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDocs,
+  isAppOffline,
+  mergeAndCacheLocalFirst
+} from '@renderer/lib/offline/sqlite-cache'
 import { trackWrite } from '../sync/sync-store'
 
 export async function listDiningTables(includeInactive = false): Promise<DiningTable[]> {
@@ -15,8 +20,8 @@ export async function listDiningTables(includeInactive = false): Promise<DiningT
   } else {
     try {
       const snap = await getDocs(query(collections.diningTables(), orderBy('sortOrder', 'asc')))
-      tables = snap.docs.map((d) => mapDoc<DiningTable>(d))
-      await cacheDocs(COLLECTIONS.diningTables, tables)
+      const remoteTables = snap.docs.map((d) => mapDoc<DiningTable>(d))
+      tables = await mergeAndCacheLocalFirst(COLLECTIONS.diningTables, remoteTables)
     } catch (e) {
       tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
       if (!tables.length) throw e

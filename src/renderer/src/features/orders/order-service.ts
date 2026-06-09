@@ -34,7 +34,8 @@ import {
   cacheDocs,
   getCachedDoc,
   getCachedDocs,
-  isAppOffline
+  isAppOffline,
+  mergeAndCacheLocalFirst
 } from '@renderer/lib/offline/sqlite-cache'
 
 export interface CartLine {
@@ -68,9 +69,9 @@ export async function getSettings(): Promise<AppSettings> {
     nextOrderNumber: 1,
     updatedAt: Date.now()
   }
-  if (isAppOffline()) {
-    return (await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)) ?? defaults
-  }
+  const cachedSettings = await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)
+  if (cachedSettings) return cachedSettings
+  if (isAppOffline()) return defaults
   try {
     const snap = await getDoc(doc(collections.settings(), SETTINGS_DOC_ID))
     if (!snap.exists()) return defaults
@@ -256,7 +257,14 @@ async function nextShiftOrderReference(
   } else {
     try {
       const snap = await getDocs(query(collections.orders(), where('shiftId', '==', shiftId)))
-      existingOrders = snap.docs.map((d) => mapDoc<Order>(d))
+      const remoteOrders = snap.docs.map((d) => mapDoc<Order>(d))
+      const localOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
+        (order) => order.shiftId === shiftId
+      )
+      existingOrders = [
+        ...remoteOrders,
+        ...localOrders.filter((localOrder) => !remoteOrders.some((order) => order.id === localOrder.id))
+      ]
     } catch {
       existingOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
         (order) => order.shiftId === shiftId
@@ -562,9 +570,9 @@ export async function listOrders(limit = 50): Promise<Order[]> {
     const snap = await getDocs(
       query(collections.orders(), orderBy('createdAt', 'desc'))
     )
-    const orders = snap.docs.map((d) => mapDoc<Order>(d))
-    await cacheDocs(COLLECTIONS.orders, orders)
-    return orders.slice(0, limit)
+    const remoteOrders = snap.docs.map((d) => mapDoc<Order>(d))
+    const orders = await mergeAndCacheLocalFirst(COLLECTIONS.orders, remoteOrders)
+    return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
   } catch (e) {
     const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
     if (orders.length) return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
@@ -629,9 +637,9 @@ export async function getOrderItems(orderId: string): Promise<OrderItem[]> {
       where('orderId', '==', orderId)
     )
     const snap = await getDocs(q)
-    const items = snap.docs.map((d) => mapDoc<OrderItem>(d))
-    await cacheDocs(COLLECTIONS.orderItems, items)
-    return items
+    const remoteItems = snap.docs.map((d) => mapDoc<OrderItem>(d))
+    const items = await mergeAndCacheLocalFirst(COLLECTIONS.orderItems, remoteItems)
+    return items.filter((item) => item.orderId === orderId)
   } catch (e) {
     const items = (await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)).filter(
       (item) => item.orderId === orderId

@@ -6,7 +6,12 @@ import { omitUndefined } from '@renderer/lib/utils/firestore-data'
 import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { cacheDocs, getCachedDocs, isAppOffline } from '@renderer/lib/offline/sqlite-cache'
+import {
+  cacheDocs,
+  getCachedDocs,
+  isAppOffline,
+  mergeAndCacheLocalFirst
+} from '@renderer/lib/offline/sqlite-cache'
 
 export async function listSuppliers(activeOnly = false): Promise<Supplier[]> {
   let suppliers: Supplier[]
@@ -17,8 +22,9 @@ export async function listSuppliers(activeOnly = false): Promise<Supplier[]> {
   } else {
     try {
       const snap = await getDocs(query(collections.suppliers(), orderBy('nameAr')))
-      suppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
-      await cacheDocs(COLLECTIONS.suppliers, suppliers)
+      const remoteSuppliers = snap.docs.map((d) => mapDoc<Supplier>(d))
+      suppliers = await mergeAndCacheLocalFirst(COLLECTIONS.suppliers, remoteSuppliers)
+      suppliers = suppliers.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
     } catch (e) {
       suppliers = await getCachedDocs<Supplier>(COLLECTIONS.suppliers)
       if (!suppliers.length) throw e
@@ -117,9 +123,10 @@ export async function listSupplierTransactions(
     const base = query(collections.supplierTransactions(), orderBy('createdAt', 'desc'))
     const q = supplierId ? query(base, where('supplierId', '==', supplierId)) : base
     const snap = await getDocs(q)
-    const transactions = snap.docs.map((d) => mapDoc<SupplierTransaction>(d))
-    await cacheDocs(COLLECTIONS.supplierTransactions, transactions)
-    return transactions
+    const remoteTransactions = snap.docs.map((d) => mapDoc<SupplierTransaction>(d))
+    let transactions = await mergeAndCacheLocalFirst(COLLECTIONS.supplierTransactions, remoteTransactions)
+    if (supplierId) transactions = transactions.filter((tx) => tx.supplierId === supplierId)
+    return transactions.sort((a, b) => b.createdAt - a.createdAt)
   } catch (e) {
     let transactions = await getCachedDocs<SupplierTransaction>(COLLECTIONS.supplierTransactions)
     if (supplierId) transactions = transactions.filter((tx) => tx.supplierId === supplierId)

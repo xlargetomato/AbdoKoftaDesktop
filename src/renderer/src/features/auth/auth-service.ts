@@ -22,7 +22,9 @@ import {
   getCachedDoc,
   getCachedDocs,
   isAppOffline,
-  isOfflineError
+  isOfflineError,
+  mergeAndCacheLocalFirst,
+  mergeDocAndCacheLocalFirst
 } from '@renderer/lib/offline/sqlite-cache'
 
 const OFFLINE_AUTH_KEY = 'abdokofta.offlineAuth.v1'
@@ -196,8 +198,7 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
       createdAt: data.createdAt as number,
       updatedAt: data.updatedAt as number
     }
-    await cacheDocs(COLLECTIONS.users, [user])
-    return user
+    return await mergeDocAndCacheLocalFirst(COLLECTIONS.users, user, uid)
   } catch (e) {
     const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, uid)
     if (cached) return cached
@@ -303,9 +304,9 @@ export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
   try {
     const q = query(collections.users(), where('role', '==', role))
     const snap = await getDocs(q)
-    const users = snap.docs.map((d) => mapDoc<AppUser>(d))
-    await cacheDocs(COLLECTIONS.users, users)
-    return users
+    const remoteUsers = snap.docs.map((d) => mapDoc<AppUser>(d))
+    const users = await mergeAndCacheLocalFirst(COLLECTIONS.users, remoteUsers)
+    return users.filter((user) => user.role === role)
   } catch (e) {
     const users = await getCachedDocs<AppUser>(COLLECTIONS.users)
     if (users.length) return users.filter((user) => user.role === role)

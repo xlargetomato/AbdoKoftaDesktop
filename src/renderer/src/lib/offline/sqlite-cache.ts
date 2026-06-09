@@ -28,6 +28,40 @@ export async function getCachedDoc<T>(
   return (await window.electronAPI.getCachedDocument(collectionName, documentId)) as T | null
 }
 
+export function mergeLocalFirst<T extends { id: string }>(
+  localDocs: T[],
+  remoteDocs: T[]
+): T[] {
+  const byId = new Map<string, T>()
+  for (const doc of remoteDocs) byId.set(doc.id, doc)
+  for (const doc of localDocs) byId.set(doc.id, doc)
+  return Array.from(byId.values())
+}
+
+export async function mergeAndCacheLocalFirst<T extends { id: string }>(
+  collectionName: string,
+  remoteDocs: T[]
+): Promise<T[]> {
+  const localDocs = await getCachedDocs<T>(collectionName)
+  const merged = mergeLocalFirst(localDocs, remoteDocs)
+  if (remoteDocs.length) await cacheDocs(collectionName, merged)
+  return merged
+}
+
+export async function mergeDocAndCacheLocalFirst<T extends { id: string }>(
+  collectionName: string,
+  remoteDoc: T | null,
+  documentId: string
+): Promise<T | null> {
+  const localDoc = await getCachedDoc<T>(collectionName, documentId)
+  if (localDoc) return localDoc
+  if (remoteDoc) {
+    await cacheDocs(collectionName, [remoteDoc])
+    return remoteDoc
+  }
+  return null
+}
+
 export function isOfflineError(err: unknown): boolean {
   const code = (err as { code?: string })?.code ?? ''
   const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
