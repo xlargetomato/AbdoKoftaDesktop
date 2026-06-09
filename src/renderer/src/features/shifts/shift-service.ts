@@ -40,6 +40,49 @@ async function patchCachedShifts(
   if (updates.length) await cacheDocs(COLLECTIONS.shifts, updates)
 }
 
+function normalizeIdentity(value?: string): string {
+  return value?.trim().toLowerCase() ?? ''
+}
+
+function isInShiftWindow(timestamp: number | undefined, shift: Shift): boolean {
+  if (!timestamp) return false
+  const end = shift.closedAt ?? Date.now()
+  return timestamp >= shift.openedAt && timestamp <= end
+}
+
+function orderMatchesShiftCashier(order: Order, shift: Shift): boolean {
+  if (order.cashierId === shift.cashierId) return true
+  if (
+    normalizeIdentity(order.cashierCode) &&
+    normalizeIdentity(order.cashierCode) === normalizeIdentity(shift.cashierCode)
+  ) {
+    return true
+  }
+  const orderCashierName = normalizeIdentity(order.cashierName)
+  return !!orderCashierName && orderCashierName === normalizeIdentity(shift.cashierName)
+}
+
+function orderBelongsToShift(order: Order, shift: Shift): boolean {
+  if (order.shiftId === shift.id) return true
+  if (order.shiftId) return false
+  return isInShiftWindow(order.createdAt, shift) && orderMatchesShiftCashier(order, shift)
+}
+
+function transactionBelongsToShift(
+  tx: Pick<CashDrawerTransaction | InventoryTransaction, 'shiftId' | 'createdAt' | 'createdBy'> & {
+    orderId?: string
+    referenceId?: string
+  },
+  shift: Shift,
+  orderIds: Set<string>
+): boolean {
+  if (tx.shiftId === shift.id) return true
+  if (tx.shiftId) return false
+  if (tx.orderId && orderIds.has(tx.orderId)) return true
+  if (tx.referenceId && orderIds.has(tx.referenceId)) return true
+  return tx.createdBy === shift.cashierId && isInShiftWindow(tx.createdAt, shift)
+}
+
 export async function listShifts(includeArchived = false): Promise<Shift[]> {
   let shifts: Shift[]
   if (isAppOffline()) {
@@ -183,22 +226,28 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
   const [allOrders, inventoryTransactions, cashTransactions] = await Promise.all([
     listOrders(2000),
     listInventoryTransactions(),
-    listCashDrawerTransactions(shift.id)
+    listCashDrawerTransactions()
   ])
-  const orders = allOrders.filter((o) => o.shiftId === shift.id)
+  const orders = allOrders
+    .filter((o) => orderBelongsToShift(o, shift))
+    .sort((a, b) => a.createdAt - b.createdAt)
+  const orderIds = new Set(orders.map((order) => order.id))
   const completedOrders = orders.filter((o) => o.status === 'completed')
   const cancelledOrders = orders.filter((o) => o.status === 'cancelled')
   const suppliedInventory = inventoryTransactions.filter(
-    (tx) => tx.shiftId === shift.id && tx.type === 'purchase'
+    (tx) => transactionBelongsToShift(tx, shift, orderIds) && tx.type === 'purchase'
   )
   const usedInventory = inventoryTransactions.filter(
-    (tx) => tx.shiftId === shift.id && (tx.type === 'sale' || tx.type === 'waste')
+    (tx) => transactionBelongsToShift(tx, shift, orderIds) && (tx.type === 'sale' || tx.type === 'waste')
+  )
+  const shiftCashTransactions = cashTransactions.filter((tx) =>
+    transactionBelongsToShift(tx, shift, orderIds)
   )
   const revenue = completedOrders.reduce((sum, o) => sum + o.total, 0)
-  const expenses = cashTransactions
+  const expenses = shiftCashTransactions
     .filter((tx) => tx.type !== 'sale' && tx.amount < 0)
     .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
-  const drawerTotal = cashTransactions.reduce((sum, tx) => sum + tx.amount, 0)
+  const drawerTotal = shiftCashTransactions.reduce((sum, tx) => sum + tx.amount, 0)
   return {
     shift,
     orders,
@@ -209,6 +258,6 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     expenses,
     suppliedInventory,
     usedInventory,
-    cashTransactions
+    cashTransactions: shiftCashTransactions
   }
 }

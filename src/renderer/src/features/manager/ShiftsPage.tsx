@@ -13,6 +13,21 @@ import { MdArchive, MdLock, MdRefresh, MdUnarchive } from 'react-icons/md'
 
 type ShiftViewMode = 'active' | 'archived'
 
+function orderStatusLabel(status: string): string {
+  if (status === 'completed') return 'مكتمل'
+  if (status === 'cancelled') return 'ملغي'
+  return 'مفتوح'
+}
+
+function paymentStatusLabel(status?: string): string {
+  return status === 'unpaid' ? 'غير مدفوع' : 'مدفوع'
+}
+
+function orderPlaceLabel(order: ShiftSummary['orders'][number]): string {
+  if (order.orderType !== 'dine_in') return 'تيك أواي'
+  return [order.tableCategoryAr, order.tableNameAr].filter(Boolean).join(' / ') || 'صالة'
+}
+
 export function ShiftsPage(): React.ReactElement {
   const user = useAuthStore((s) => s.user)!
   const [allShifts, setAllShifts] = useState<Shift[]>([])
@@ -156,24 +171,71 @@ export function ShiftsPage(): React.ReactElement {
             <div className="stat-card"><div className="stat-card__label">إجمالي الإيراد</div><div className="stat-card__value">{selected.revenue.toFixed(2)}</div></div>
             <div className="stat-card"><div className="stat-card__label">فلوس الدرج</div><div className="stat-card__value">{selected.drawerTotal.toFixed(2)}</div></div>
             <div className="stat-card"><div className="stat-card__label">المصروفات</div><div className="stat-card__value">{selected.expenses.toFixed(2)}</div></div>
+            <div className="stat-card"><div className="stat-card__label">كل الطلبات</div><div className="stat-card__value">{selected.orders.length}</div></div>
             <div className="stat-card"><div className="stat-card__label">طلبات مكتملة</div><div className="stat-card__value">{selected.completedOrders.length}</div></div>
             <div className="stat-card"><div className="stat-card__label">طلبات ملغية</div><div className="stat-card__value">{selected.cancelledOrders.length}</div></div>
             <div className="stat-card"><div className="stat-card__label">توريدات مخزون</div><div className="stat-card__value">{selected.suppliedInventory.length}</div></div>
           </div>
+
+          <h3 className="section-title">أوردرات الشيفت</h3>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>الأوردر</th>
+                <th>الوقت</th>
+                <th>النوع / الترابيزة</th>
+                <th>الحالة</th>
+                <th>الدفع</th>
+                <th>الإجمالي</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selected.orders.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-muted)' }}>
+                    لا توجد أوردرات في هذا الشيفت
+                  </td>
+                </tr>
+              ) : selected.orders.map((order) => (
+                <tr key={order.id}>
+                  <td dir="ltr">{order.orderCode ?? order.orderNumber}</td>
+                  <td>{new Date(order.createdAt).toLocaleString('ar-EG')}</td>
+                  <td>{orderPlaceLabel(order)}</td>
+                  <td>{orderStatusLabel(order.status)}</td>
+                  <td>{paymentStatusLabel(order.paymentStatus)}</td>
+                  <td>{order.total.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
           <h3 className="section-title">الأوردرات الملغية</h3>
           <table className="data-table">
             <thead><tr><th>الأوردر</th><th>السبب</th><th>الإجمالي</th></tr></thead>
             <tbody>
-              {selected.cancelledOrders.map((o) => (
+              {selected.cancelledOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--color-muted)' }}>
+                    لا توجد أوردرات ملغية
+                  </td>
+                </tr>
+              ) : selected.cancelledOrders.map((o) => (
                 <tr key={o.id}><td dir="ltr">{o.orderCode ?? o.orderNumber}</td><td>{o.cancelReasonAr ?? '-'}</td><td>{o.total.toFixed(2)}</td></tr>
               ))}
             </tbody>
           </table>
+
           <h3 className="section-title">المخزون المستخدم</h3>
           <table className="data-table">
-            <thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th></tr></thead>
+            <thead><tr><th>المكون</th><th>الكمية</th><th>الوحدة</th></tr></thead>
             <tbody>
-              {selected.usedInventory.map((tx) => (
+              {selected.usedInventory.length === 0 ? (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--color-muted)' }}>
+                    لا توجد حركات مخزون مستخدمة
+                  </td>
+                </tr>
+              ) : selected.usedInventory.map((tx) => (
                 <tr key={tx.id}><td>{tx.ingredientId}</td><td>{tx.quantity.toFixed(2)}</td><td>{tx.unit}</td></tr>
               ))}
             </tbody>
