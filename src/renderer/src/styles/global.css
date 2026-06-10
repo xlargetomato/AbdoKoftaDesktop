@@ -137,49 +137,66 @@ textarea {
 }
 
 .btn--sm {
-  min-height: 32px;
+  min-height: 34px;
   padding: 0 10px;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 /* Forms */
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 14px;
+  gap: 3px;
+  margin-bottom: 8px;
 }
 
 .field span {
-  font-weight: 700;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  letter-spacing: 0.02em;
 }
 
 .field--checkbox {
   flex-direction: row;
   align-items: center;
+  gap: 8px;
 }
 
 .field--checkbox input {
-  width: 18px;
-  min-height: 18px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
 }
 
 .field input,
 .field select,
 .field textarea {
-  min-height: var(--touch-min);
-  padding: 10px 12px;
-  border: 2px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 1rem;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1.5px solid var(--color-border-light);
+  border-radius: 3px;
+  font-size: 0.9rem;
+  font-family: var(--font);
   background: var(--color-surface);
+  color: var(--color-text);
   transition:
     border-color var(--t-mid) var(--ease-out),
     background var(--t-mid) var(--ease-out),
     box-shadow var(--t-mid) var(--ease-out);
+}
+
+.field select {
+  cursor: pointer;
+  appearance: auto;
+}
+
+.field textarea {
+  min-height: 60px;
+  resize: vertical;
+  padding-top: 7px;
 }
 
 @media (hover: hover) {
@@ -194,18 +211,19 @@ textarea {
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 0;
+  outline: none;
+  border-color: var(--color-primary);
   background: #fff;
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
 }
 
 .form-error {
   color: var(--color-danger);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  margin: 0 0 12px;
-  padding: 8px;
-  border: 2px solid var(--color-danger);
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-right: 3px solid var(--color-danger);
   background: #fef2f2;
 }
 
@@ -291,15 +309,28 @@ textarea {
 
 .password-field input {
   width: 100%;
-  min-height: var(--touch-min);
-  padding: 10px 44px 10px 12px;
-  border: 2px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 1rem;
+  min-height: 34px;
+  padding: 5px 44px 5px 12px;
+  border: 1.5px solid var(--color-border-light);
+  border-radius: 3px;
+  font-size: 0.9rem;
   background: var(--color-surface);
   transition:
     border-color var(--t-mid) var(--ease-out),
     background var(--t-mid) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .password-field input:hover:not(:focus) {
+    border-color: var(--color-primary);
+    background: var(--color-primary-soft);
+  }
+}
+
+.password-field input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
 }
 
 @media (hover: hover) {
@@ -513,12 +544,21 @@ textarea {
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
+  overflow: hidden;
 }
 
 .app-main {
   flex: 1;
   overflow: auto;
   padding: 24px;
+  min-height: 0;
+}
+
+.app-main--flush {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-header {
@@ -821,24 +861,28 @@ textarea {
 /* POS */
 .pos-layout {
   display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 12px;
-  height: calc(100vh - 120px);
-  min-height: 500px;
+  grid-template-columns: 1fr 380px;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
   .pos-layout {
     grid-template-columns: 1fr;
     height: auto;
+    overflow: visible;
   }
 }
 
 .pos-menu {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
+  padding: 10px;
+  min-height: 0;
 }
 
 .pos-search {
@@ -909,6 +953,7 @@ textarea {
 
 .pos-item-btn {
   width: 100%;
+  flex: 1;
   min-height: 80px;
   padding: 12px;
   border: 0;
@@ -917,10 +962,7 @@ textarea {
   text-align: center;
   font-weight: 700;
   transition:
-    transform var(--t-fast) var(--ease-out),
-    background var(--t-mid) var(--ease-out),
-    border-color var(--t-mid) var(--ease-out),
-    box-shadow var(--t-mid) var(--ease-out);
+    background var(--t-mid) var(--ease-out);
 }
 
 @media (hover: hover) {
@@ -930,13 +972,17 @@ textarea {
     box-shadow: var(--shadow-hover-primary);
   }
 
-  .pos-item-btn:hover {
+  .pos-item-wrap:hover .pos-item-btn {
     background: var(--color-primary-soft);
   }
 
   .pos-item-wrap:active {
     transform: translate(1px, 1px);
     box-shadow: none;
+  }
+
+  .pos-item-wrap:active .pos-item-btn {
+    background: var(--color-surface);
   }
 }
 
@@ -952,16 +998,31 @@ textarea {
   display: flex;
   flex-direction: column;
   background: var(--color-surface);
-  border: 2px solid var(--color-border);
+  border-right: 2px solid var(--color-border);
+  border-left: 0;
   overflow: hidden;
+  height: 100%;
+  min-height: 0;
 }
 
 .pos-cart__header {
-  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 2px solid var(--color-border);
   font-weight: 800;
   text-transform: uppercase;
   background: #f5f5f5;
+  flex-shrink: 0;
+}
+
+.pos-cart__shift-btn {
+  min-height: 30px;
+  font-size: 0.78rem;
+  padding: 0 10px;
+  flex-shrink: 0;
 }
 
 .order-service-panel {
@@ -972,7 +1033,7 @@ textarea {
 
 .order-type-toggle {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   border: 2px solid var(--color-border);
   background: var(--color-surface);
 }
@@ -1176,8 +1237,70 @@ textarea {
 }
 
 .pos-cart__footer {
-  padding: 12px;
+  padding: 10px 12px 14px;
   border-top: 2px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.order-note {
+  width: 100%;
+  min-height: 52px;
+  max-height: 80px;
+  resize: vertical;
+  padding: 7px 10px;
+  border: 1.5px solid var(--color-border-light);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 0.88rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color var(--t-mid) var(--ease-out), background var(--t-mid) var(--ease-out);
+}
+
+.order-note:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
+}
+
+.cart-summary {
+  padding: 8px 0 4px;
+  border-top: 2px solid var(--color-border);
+}
+
+.cart-summary > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cart-summary span {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cart-summary strong {
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: var(--color-primary);
+}
+
+.checkout-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.checkout-actions .btn {
+  flex: 1;
+  min-height: 48px;
+  font-size: 0.95rem;
 }
 
 .pos-totals div {
@@ -1206,9 +1329,9 @@ textarea {
 .page-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 16px;
-  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: flex-end;
 }
 
 .modal-overlay {
@@ -1281,6 +1404,7 @@ textarea {
   flex-wrap: nowrap;
   gap: 4px;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .category-list {
@@ -1953,6 +2077,11 @@ textarea {
   align-items: center;
   opacity: 0.7;
   font-size: 1.1rem;
+  transition: transform var(--t-mid) var(--ease-out);
+}
+
+.app-sidebar__dropdown-trigger[aria-expanded="true"] .app-sidebar__dropdown-arrow {
+  transform: rotate(180deg);
 }
 
 .app-sidebar__dropdown-menu {
@@ -1962,7 +2091,19 @@ textarea {
   padding: 4px 0 4px 0;
   border-right: 2px solid var(--color-primary);
   margin-right: 18px;
-  animation: modal-in var(--t-mid) var(--ease-out);
+  overflow: hidden;
+  animation: dropdown-in 180ms var(--ease-out);
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .app-sidebar__dropdown-item {
@@ -2016,6 +2157,9 @@ textarea {
   overflow: hidden;
   background: var(--color-surface);
   border: 2px solid var(--color-border);
+  border-color: var(--color-border);
+  transform: translate(0, 0);
+  box-shadow: none;
   transition:
     transform var(--t-fast) var(--ease-out),
     border-color var(--t-mid) var(--ease-out),
@@ -2761,4 +2905,224 @@ textarea {
 .weight-popup__custom input:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+
+/* ── Login form button spacing ───────────────────────────────────────────── */
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Standalone inputs outside .field (toolbar rows, recipe lines) ───────── */
+
+.page-toolbar input,
+.page-toolbar select {
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1.5px solid var(--color-border-light);
+  border-radius: 3px;
+  font-size: 0.9rem;
+  font-family: var(--font);
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: border-color var(--t-mid) var(--ease-out);
+}
+
+.page-toolbar input:focus,
+.page-toolbar select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
+}
+
+.page-toolbar select {
+  cursor: pointer;
+}
+
+/* ── Suppress button hover jump inside table/toolbar rows ────────────────── */
+
+.table-actions .btn:hover:not(:disabled),
+.page-toolbar .btn:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  filter: brightness(0.92);
+}
+
+.table-actions .btn--primary:hover:not(:disabled),
+.page-toolbar .btn--primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  filter: none;
+}
+
+/* Match button height to inputs inside toolbars */
+.page-toolbar .btn,
+.page-toolbar .btn--sm {
+  min-height: 34px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+}
+
+/* ── Custom checkbox / toggle ────────────────────────────────────────────── */
+
+/* Hide native checkbox, replace with custom styled one */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  min-height: unset;
+  flex-shrink: 0;
+  background: #d1d5db;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 200ms var(--ease-out);
+  outline: none;
+  vertical-align: middle;
+}
+
+input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: transform 200ms var(--ease-out), right 200ms var(--ease-out);
+}
+
+input[type="checkbox"]:checked {
+  background: var(--color-primary);
+}
+
+input[type="checkbox"]:checked::after {
+  right: calc(100% - 17px);
+}
+
+@media (hover: hover) {
+  input[type="checkbox"]:hover {
+    background: #9ca3af;
+  }
+  input[type="checkbox"]:checked:hover {
+    background: var(--color-primary-dark);
+  }
+}
+
+input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.3);
+}
+
+/* Smaller checkbox variant for table rows */
+.table-checkbox {
+  width: 16px;
+  height: 16px;
+  min-height: unset;
+  border-radius: 3px;
+  border: 1.5px solid var(--color-border) !important;
+  background: var(--color-surface) !important;
+}
+
+.table-checkbox::after {
+  display: none;
+}
+
+.table-checkbox:checked {
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+}
+
+.table-checkbox:checked::after {
+  display: block;
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 5px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-right: none;
+  transform: rotate(-45deg);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* Label alignment for toggle + text */
+.field--checkbox,
+label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* ── Global inline button/input height alignment ─────────────────────────── */
+/* Anywhere a button sits next to an input or select, normalize to 34px */
+
+.form-actions .btn,
+.form-actions .btn--sm,
+.form-actions .btn--primary,
+.form-actions .btn--secondary,
+.form-actions .btn--danger,
+.page-toolbar .btn,
+.page-toolbar .btn--sm,
+.table-actions .btn,
+.table-actions .btn--sm,
+.pin-cashier-input-row .btn,
+.cashier-history__toolbar .btn,
+.reports-filter__btn,
+.weight-popup__btn {
+  min-height: 34px;
+  height: 34px;
+}
+
+/* Form-actions row — flex align center so buttons don't stretch */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Standalone full-width action buttons keep their size */
+.pos-actions .btn,
+.btn--lg {
+  min-height: var(--touch-min);
+  height: auto;
+}
+
+/* Inline inputs that appear without .field wrapper (inline edit rows) */
+input.inline-edit-input,
+select.inline-edit-input {
+  min-height: 34px;
+  height: 34px;
+  padding: 5px 10px;
+}
+
+/* ── Settings form grid ──────────────────────────────────────────────────── */
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 16px;
+  align-items: end;
+}
+
+.settings-form-grid__full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+  .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
 }

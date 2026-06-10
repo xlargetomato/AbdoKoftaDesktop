@@ -220,7 +220,9 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
       </aside>
 
       <div className="app-shell__content">
-        <main className="app-main">{children}</main>
+        <main className={`app-main${location.pathname === '/' || location.pathname === '/pos' ? ' app-main--flush' : ''}`}>
+          {children}
+        </main>
       </div>
     </div>
   )

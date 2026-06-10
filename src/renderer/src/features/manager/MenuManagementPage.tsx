@@ -418,7 +418,7 @@ export function MenuManagementPage(): React.ReactElement {
               .filter((category) => !category.parentId)
               .map((category) => <option key={category.id} value={category.id}>داخل: {category.nameAr}</option>)}
           </select>
-          <button type="submit" className="btn btn--primary">إضافة تصنيف</button>
+          <button type="submit" className="btn btn--primary p-[18px]">إضافة تصنيف</button>
         </form>
         <ul className="category-list">
           {categories.map((c, idx) => (

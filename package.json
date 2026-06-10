@@ -14,6 +14,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "seed": "tsx scripts/seed.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "seed:local": "node --experimental-sqlite scripts/seed-local.mjs",
     "deploy:rules": "tsx scripts/deploy-rules.ts",
     "verify:login": "tsx scripts/verify-login.ts",
     "setup:firebase": "tsx scripts/setup-firebase.ts"

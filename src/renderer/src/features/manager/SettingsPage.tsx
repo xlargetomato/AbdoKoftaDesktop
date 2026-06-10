@@ -180,26 +180,28 @@ export function SettingsPage(): React.ReactElement {
     <div className="settings-page">
 
       {/* ── Receipt card ── */}
-      <div className="card">
+      <div className="card" style={{ order: 1 }}>
         <h2 className="card__title">تعديل الإيصال</h2>
         {receiptMsg && <p className={`form-message ${receiptMsg.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`}>{receiptMsg}</p>}
         <form onSubmit={(e) => void handleReceiptSave(e)}>
-          <label className="field">
-            <span>اسم المطعم</span>
-            <input value={receiptForm.restaurantNameAr} onChange={(e) => setReceiptForm((f) => ({ ...f, restaurantNameAr: e.target.value }))} required />
-          </label>
-          <label className="field">
-            <span>رمز العملة</span>
-            <input value={receiptForm.currencySymbol} onChange={(e) => setReceiptForm((f) => ({ ...f, currencySymbol: e.target.value }))} placeholder="ج.م" required style={{ maxWidth: 120 }} />
-          </label>
-          <label className="field">
-            <span>رقم الهاتف</span>
-            <input value={receiptForm.phoneNumber} onChange={(e) => setReceiptForm((f) => ({ ...f, phoneNumber: e.target.value }))} placeholder="01xxxxxxxxx" dir="ltr" />
-          </label>
-          <label className="field">
-            <span>تذييل الإيصال</span>
-            <textarea value={receiptForm.receiptFooterAr} onChange={(e) => setReceiptForm((f) => ({ ...f, receiptFooterAr: e.target.value }))} placeholder="شكراً لزيارتكم…" rows={2} />
-          </label>
+          <div className="settings-form-grid">
+            <label className="field">
+              <span>اسم المطعم</span>
+              <input value={receiptForm.restaurantNameAr} onChange={(e) => setReceiptForm((f) => ({ ...f, restaurantNameAr: e.target.value }))} required />
+            </label>
+            <label className="field">
+              <span>رمز العملة</span>
+              <input value={receiptForm.currencySymbol} onChange={(e) => setReceiptForm((f) => ({ ...f, currencySymbol: e.target.value }))} placeholder="ج.م" required />
+            </label>
+            <label className="field">
+              <span>رقم الهاتف</span>
+              <input value={receiptForm.phoneNumber} onChange={(e) => setReceiptForm((f) => ({ ...f, phoneNumber: e.target.value }))} placeholder="01xxxxxxxxx" dir="ltr" />
+            </label>
+            <label className="field settings-form-grid__full">
+              <span>تذييل الإيصال</span>
+              <textarea value={receiptForm.receiptFooterAr} onChange={(e) => setReceiptForm((f) => ({ ...f, receiptFooterAr: e.target.value }))} placeholder="شكراً لزيارتكم…" rows={2} />
+            </label>
+          </div>
           <div className="form-actions">
             <button type="submit" className="btn btn--primary" disabled={receiptSaving}>
               <MdSave /> {receiptSaving ? 'جارٍ الحفظ…' : 'حفظ الإيصال'}
@@ -208,10 +210,10 @@ export function SettingsPage(): React.ReactElement {
         </form>
       </div>
 
-      <div className="card settings-page__full">
+      <div className="card settings-page__full" style={{ order: 3 }}>
         <h2 className="card__title"><MdTableRestaurant style={{ verticalAlign: 'middle', marginLeft: 6 }} />ترابيزات الصالة</h2>
         {tableMsg && <p className={`form-message ${tableMsg.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`}>{tableMsg}</p>}
-        <form className="table-manager-form" onSubmit={(e) => void handleTableSave(e)}>
+        <form className="table-manager-form settings-form-grid" onSubmit={(e) => void handleTableSave(e)}>
           <label className="field">
             <span>اسم / رقم الترابيزة</span>
             <input value={tableForm.nameAr} onChange={(e) => setTableForm((f) => ({ ...f, nameAr: e.target.value }))} placeholder="مثال: 1 أو VIP" required />
@@ -222,9 +224,9 @@ export function SettingsPage(): React.ReactElement {
           </label>
           <label className="field">
             <span>الترتيب</span>
-            <input type="number" value={tableForm.sortOrder} onChange={(e) => setTableForm((f) => ({ ...f, sortOrder: e.target.value }))} />
+            <input type="number" value={tableForm.sortOrder} onChange={(e) => setTableForm((f) => ({ ...f, sortOrder: e.target.value }))} style={{ maxWidth: 100 }} />
           </label>
-          <div className="form-actions table-manager-form__actions">
+          <div className="form-actions settings-form-grid__full table-manager-form__actions">
             <button type="submit" className="btn btn--primary" disabled={tableSaving}>
               <MdSave /> {tableSaving ? 'جارٍ الحفظ...' : tableForm.id ? 'تحديث الترابيزة' : 'إضافة ترابيزة'}
             </button>
@@ -261,7 +263,7 @@ export function SettingsPage(): React.ReactElement {
         </div>
       </div>
       {/* ── Theme card ── */}
-      <div className="card">
+      <div className="card" style={{ order: 2 }}>
         <h2 className="card__title"><MdPalette style={{ verticalAlign: 'middle', marginLeft: 6 }} />ألوان التطبيق</h2>
         {themeMsg && <p className={`form-message ${themeMsg.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`}>{themeMsg}</p>}
         <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)', marginBottom: 16 }}>اختر اللون الرئيسي للتطبيق</p>
@@ -299,7 +301,7 @@ export function SettingsPage(): React.ReactElement {
       </div>
 
       {/* ── PIN / Auto-lock card (full width) ── */}
-      <div className="card settings-page__full">
+      <div className="card settings-page__full" style={{ order: 4 }}>
         <h2 className="card__title"><MdLock style={{ verticalAlign: 'middle', marginLeft: 6 }} />قفل الشاشة بـ PIN</h2>
 
         {pinMsg && <p className={`form-message ${pinMsg.includes('فشل') || pinMsg.includes('يجب') ? 'form-message--error' : 'form-message--ok'}`}>{pinMsg}</p>}

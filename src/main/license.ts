@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEA6a1H+875wp9OrSjSzdgsiufVmclxnQlaY5kAHn+Fmio=
+MCowBQYDK2VwAyEADGYiLWKug8a+dgJDwnUgQoL6zCWvqy1r4upfRI7F+CQ=
 -----END PUBLIC KEY-----`
 
 export interface ActivationRequest {

@@ -530,7 +530,12 @@ export function PosPage(): React.ReactElement {
       )}
 
       <aside className="pos-cart">
-        <div className="pos-cart__header">الطلب</div>
+        <div className="pos-cart__header">
+          <span>الطلب</span>
+          <button type="button" className="btn btn--secondary btn--sm pos-cart__shift-btn" onClick={() => void handleCloseShift()}>
+            تقفيل الشيفت
+          </button>
+        </div>
         <div className="order-service-panel">
           <div className="order-type-toggle">
             <button
@@ -571,7 +576,12 @@ export function PosPage(): React.ReactElement {
           )}
         </div>
         <div className="pos-cart__lines">
-          {cart.length === 0 && <p style={{ textAlign: 'center', color: 'var(--color-muted)', padding: 16 }}>أضف أصنافًا من القائمة</p>}
+          {cart.length === 0 && (
+            <div className="pos-cart__empty">
+              <img src="/image.png" alt="شعار المطعم" className="pos-cart__logo" />
+              <p className="pos-cart__empty-text">أضف أصنافًا من القائمة</p>
+            </div>
+          )}
           {cart.map((line) => (
             <div key={line.key} className={`cart-line${line.parentKey ? ' cart-line--attachment' : ''}`}>
               <div>
@@ -591,9 +601,6 @@ export function PosPage(): React.ReactElement {
           ))}
         </div>
         <div className="pos-cart__footer">
-          <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleCloseShift()} style={{ width: '100%', marginBottom: 8 }}>
-            تقفيل الشيفت
-          </button>
           <textarea className="order-note" placeholder="ملاحظة على الطلب..." value={orderNote} onChange={(e) => setOrderNote(e.target.value)} />
           <div className="cart-summary">
             <div><span>الإجمالي</span><strong>{total.toFixed(2)}</strong></div>
