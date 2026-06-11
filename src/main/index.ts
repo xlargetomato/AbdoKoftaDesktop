@@ -69,14 +69,25 @@ import { initAutoUpdater } from './auto-updater'
 import {
   createActivationRequestFile,
   getLicenseStatus,
-  importLicenseFile
+  importLicenseFile,
+  isDevBypassActive,
+  toggleDevLicense,
+  activateMasterKey
 } from './license'
 import {
   cacheDocuments,
+  countPendingOutbox,
+  deleteCachedDocument,
+  enqueueOutbox,
   getLocalStoreStatus,
   initLocalStore,
+  markOutboxFailed,
+  markOutboxSynced,
   readCachedDocument,
-  readCachedDocuments
+  readCachedDocuments,
+  readPendingOutbox,
+  resetDatabase,
+  resetFailedOutbox
 } from './local-store'
 
 app.whenReady().then(() => {
@@ -93,6 +104,9 @@ app.whenReady().then(() => {
   ipcMain.handle('license:get-status', () => getLicenseStatus())
   ipcMain.handle('license:create-activation-request', () => createActivationRequestFile())
   ipcMain.handle('license:import-license', () => importLicenseFile())
+  ipcMain.handle('license:activate-master-key', (_event, key: string) => {
+    return activateMasterKey(key)
+  })
   ipcMain.handle('local-store:get-status', () => getLocalStoreStatus())
   ipcMain.handle('local-cache:set-documents', (_, collectionName: string, documents: Array<{ id: string; data: unknown }>) => {
     cacheDocuments(collectionName, documents)
@@ -104,6 +118,51 @@ app.whenReady().then(() => {
   ipcMain.handle('local-cache:get-document', (_, collectionName: string, documentId: string) =>
     readCachedDocument(collectionName, documentId)
   )
+
+  // SQLite primary database: delete a single document
+  ipcMain.handle('local-cache:delete-document', (_, collectionName: string, documentId: string) => {
+    const deleted = deleteCachedDocument(collectionName, documentId)
+    return { ok: true as const, deleted }
+  })
+
+  // Sync outbox: read pending entries for Firebase background upload
+  ipcMain.handle('outbox:get-pending', () => {
+    return readPendingOutbox()
+  })
+
+  // Sync outbox: enqueue a document for Firebase upload
+  ipcMain.handle('outbox:enqueue', (_, entityType: string, entityId: string, operation: 'set' | 'delete', payload: unknown) => {
+    enqueueOutbox(entityType, entityId, operation, payload)
+    return { ok: true as const }
+  })
+
+  // Sync outbox: mark entries synced
+  ipcMain.handle('outbox:mark-synced', (_, ids: string[]) => {
+    markOutboxSynced(ids)
+    return { ok: true as const }
+  })
+
+  // Sync outbox: mark entries failed
+  ipcMain.handle('outbox:mark-failed', (_, ids: string[]) => {
+    markOutboxFailed(ids)
+    return { ok: true as const }
+  })
+
+  // Sync outbox: reset failed entries for retry
+  ipcMain.handle('outbox:reset-failed', () => {
+    resetFailedOutbox()
+    return { ok: true as const }
+  })
+
+  // Sync outbox: count pending
+  ipcMain.handle('outbox:count-pending', () => {
+    return { count: countPendingOutbox() }
+  })
+
+  // DEV ONLY — wipe all SQLite data so the app boots as fresh
+  ipcMain.handle('dev:reset-database', () => {
+    return resetDatabase()
+  })
 
   ipcMain.handle('app:restart', () => {
     app.relaunch()
@@ -204,16 +263,84 @@ app.whenReady().then(() => {
   createWindow()
 
   if (isDev) {
-    const shortcuts = [
-      'F12',
-      'CommandOrControl+Shift+I',
-      'CommandOrControl+Shift+D'
-    ]
-    for (const accel of shortcuts) {
+    // Helper — injects a small toast into the renderer window
+    function devToast(bg: string, text: string): string {
+      return `(function(){
+        window.__devToast && clearTimeout(window.__devToast);
+        const el = document.createElement('div');
+        el.style.cssText =
+          'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+          'background:${bg};color:#fff;padding:10px 22px;border-radius:8px;' +
+          'font-size:14px;z-index:99999;font-family:sans-serif;' +
+          'box-shadow:0 4px 14px rgba(0,0,0,.45);pointer-events:none;white-space:nowrap;';
+        el.textContent = ${JSON.stringify(text)};
+        document.body.appendChild(el);
+        window.__devToast = setTimeout(() => el.remove(), 3500);
+      })()`
+    }
+
+    // Regular devtools shortcuts
+    for (const accel of ['CommandOrControl+Shift+I', 'CommandOrControl+Shift+D', 'F12']) {
       globalShortcut.register(accel, () => {
         toggleDevTools(BrowserWindow.getFocusedWindow() ?? mainWindow)
       })
     }
+
+    // -----------------------------------------------------------------------
+    // Ctrl+Shift+1 arms the dev menu for 2 s, then:
+    //   → Ctrl+Shift+P  toggle license bypass (activate / deactivate)
+    //   → Ctrl+Shift+R  wipe SQLite database   (fresh first-run state)
+    // -----------------------------------------------------------------------
+    let devArmed = false
+    let devTimer: ReturnType<typeof setTimeout> | null = null
+
+    function armDev(): void {
+      devArmed = true
+      if (devTimer) clearTimeout(devTimer)
+      devTimer = setTimeout(() => { devArmed = false; devTimer = null }, 2000)
+      console.log('[dev] armed — Ctrl+Shift+P = toggle license | Ctrl+Shift+R = reset DB')
+    }
+
+    function disarmDev(): void {
+      devArmed = false
+      if (devTimer) { clearTimeout(devTimer); devTimer = null }
+    }
+
+    globalShortcut.register('CommandOrControl+Shift+1', armDev)
+
+    // Toggle license bypass
+    globalShortcut.register('CommandOrControl+Shift+P', () => {
+      if (!devArmed) return
+      disarmDev()
+      const wasActive = isDevBypassActive()
+      console.log('[dev-license]', toggleDevLicense())
+      const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+      win?.webContents.executeJavaScript(devToast(
+        wasActive ? '#c0392b' : '#27ae60',
+        wasActive ? '🔴 License OFF — restart app' : '🟢 License ON — restart app'
+      )).catch(() => {})
+    })
+
+    // Wipe SQLite database
+    globalShortcut.register('CommandOrControl+Shift+R', () => {
+      if (!devArmed) return
+      disarmDev()
+      const result = resetDatabase()
+      console.log('[dev-reset]', result.ok ? 'Database wiped' : result.error)
+      const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+      if (win) {
+        // Also clear renderer localStorage (auth cache, session, etc.)
+        if (result.ok) {
+          win.webContents.executeJavaScript('localStorage.clear()').catch(() => {})
+        }
+        win.webContents.executeJavaScript(devToast(
+          result.ok ? '#2980b9' : '#c0392b',
+          result.ok
+            ? '🗑️ DB wiped — restart app to register fresh'
+            : `❌ Reset failed: ${result.error}`
+        )).catch(() => {})
+      }
+    })
   }
 
   app.on('activate', () => {

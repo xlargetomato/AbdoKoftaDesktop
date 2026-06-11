@@ -9,7 +9,7 @@ type DatabaseSync = {
   prepare: (sql: string) => {
     get: (...params: unknown[]) => unknown
     all: (...params: unknown[]) => unknown[]
-    run: (...params: unknown[]) => unknown
+    run: (...params: unknown[]) => { changes?: number }
   }
   pragma?: (sql: string) => unknown
 }
@@ -87,6 +87,10 @@ export function getLocalStoreStatus(): LocalStoreStatus {
   return initLocalStore()
 }
 
+// ---------------------------------------------------------------------------
+// Core document cache (unchanged — used by IPC local-cache:* handlers)
+// ---------------------------------------------------------------------------
+
 export function cacheDocuments(
   collectionName: string,
   documents: Array<{ id: string; data: unknown }>
@@ -123,4 +127,127 @@ export function readCachedDocument(collectionName: string, documentId: string): 
     WHERE collection_name = ? AND document_id = ?
   `).get(collectionName, documentId) as { payload_json: string } | undefined
   return row ? JSON.parse(row.payload_json) as unknown : null
+}
+
+export function deleteCachedDocument(collectionName: string, documentId: string): boolean {
+  const database = openDatabase()
+  const result = database.prepare(`
+    DELETE FROM cached_documents
+    WHERE collection_name = ? AND document_id = ?
+  `).run(collectionName, documentId)
+  return (result.changes ?? 0) > 0
+}
+
+// ---------------------------------------------------------------------------
+// Sync outbox — queue writes that need to be uploaded to Firebase
+// ---------------------------------------------------------------------------
+
+export interface OutboxEntry {
+  id: string
+  entity_type: string
+  entity_id: string
+  operation: 'set' | 'delete'
+  payload_json: string
+  status: 'pending' | 'synced' | 'failed'
+  attempts: number
+  created_at: number
+  updated_at: number
+  synced_at: number | null
+}
+
+/** Enqueue a document write for Firebase upload */
+export function enqueueOutbox(
+  entityType: string,
+  entityId: string,
+  operation: 'set' | 'delete',
+  payload: unknown
+): void {
+  const database = openDatabase()
+  const now = Date.now()
+  const id = `${entityType}:${entityId}:${now}`
+  database.prepare(`
+    INSERT INTO sync_outbox (id, entity_type, entity_id, operation, payload_json, status, attempts, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      operation = excluded.operation,
+      payload_json = excluded.payload_json,
+      status = 'pending',
+      updated_at = excluded.updated_at
+  `).run(id, entityType, entityId, operation, JSON.stringify(payload), now, now)
+}
+
+/** Read all pending outbox entries */
+export function readPendingOutbox(): OutboxEntry[] {
+  const database = openDatabase()
+  return database.prepare(`
+    SELECT * FROM sync_outbox
+    WHERE status = 'pending'
+    ORDER BY created_at ASC
+    LIMIT 200
+  `).all() as OutboxEntry[]
+}
+
+/** Mark outbox entries as synced */
+export function markOutboxSynced(ids: string[]): void {
+  if (!ids.length) return
+  const database = openDatabase()
+  const now = Date.now()
+  const placeholders = ids.map(() => '?').join(',')
+  database.prepare(`
+    UPDATE sync_outbox
+    SET status = 'synced', synced_at = ?, updated_at = ?
+    WHERE id IN (${placeholders})
+  `).run(now, now, ...ids)
+}
+
+/** Mark outbox entries as failed and increment attempts */
+export function markOutboxFailed(ids: string[]): void {
+  if (!ids.length) return
+  const database = openDatabase()
+  const now = Date.now()
+  const placeholders = ids.map(() => '?').join(',')
+  database.prepare(`
+    UPDATE sync_outbox
+    SET status = 'failed', attempts = attempts + 1, updated_at = ?
+    WHERE id IN (${placeholders})
+  `).run(now, ...ids)
+}
+
+/** Reset failed entries back to pending for retry */
+export function resetFailedOutbox(): void {
+  const database = openDatabase()
+  const now = Date.now()
+  database.prepare(`
+    UPDATE sync_outbox
+    SET status = 'pending', updated_at = ?
+    WHERE status = 'failed' AND attempts < 10
+  `).run(now)
+}
+
+/** Count pending outbox entries */
+export function countPendingOutbox(): number {
+  const database = openDatabase()
+  const row = database.prepare(
+    "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'pending'"
+  ).get() as { count?: number } | undefined
+  return Number(row?.count ?? 0)
+}
+
+/**
+ * DEV ONLY — wipe all cached_documents and sync_outbox rows.
+ * Leaves the schema intact so the app can restart cleanly.
+ * Also closes the DB connection so the renderer sees a fresh state.
+ */
+export function resetDatabase(): { ok: boolean; error?: string } {
+  try {
+    const database = openDatabase()
+    database.exec('DELETE FROM cached_documents;')
+    database.exec('DELETE FROM sync_outbox;')
+    database.exec('DELETE FROM meta;')
+    // Close the connection so next open re-initialises cleanly
+    db = null
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }

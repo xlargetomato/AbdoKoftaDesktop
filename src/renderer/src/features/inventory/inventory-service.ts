@@ -1,12 +1,6 @@
-import {
-  setDoc,
-  getDocs,
-  updateDoc,
-  deleteDoc,
-  query,
-  orderBy,
-  where
-} from 'firebase/firestore'
+/**
+ * Inventory service — SQLite primary database.
+ */
 import type {
   Ingredient,
   InventoryTransaction,
@@ -14,59 +8,21 @@ import type {
   IngredientStock
 } from '@shared/types'
 import { calculateAllStocks } from '@shared/services/inventory-ledger'
-import { collections, doc } from '@renderer/lib/firebase'
-import { mapDoc, stripId } from '@renderer/lib/utils/firestore-mapper'
-import { generateId } from '@renderer/lib/utils/id'
-import { omitUndefined } from '@renderer/lib/utils/firestore-data'
-import { trackWrite } from '../sync/sync-store'
 import { COLLECTIONS } from '@shared/constants/collections'
-import {
-  cacheDocs,
-  getCachedDocs,
-  isAppOffline,
-  mergeAndCacheLocalFirst
-} from '@renderer/lib/offline/sqlite-cache'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { dbDelete } from '@renderer/lib/db/sqlite-db'
+import { generateId } from '@renderer/lib/utils/id'
 
 export async function listIngredients(): Promise<Ingredient[]> {
-  if (isAppOffline()) {
-    return (await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)).sort((a, b) =>
-      a.nameAr.localeCompare(b.nameAr, 'ar')
-    )
-  }
-  try {
-    const snap = await getDocs(
-      query(collections.ingredients(), orderBy('nameAr'))
-    )
-    const remoteIngredients = snap.docs.map((d) => mapDoc<Ingredient>(d))
-    const ingredients = await mergeAndCacheLocalFirst(COLLECTIONS.ingredients, remoteIngredients)
-    return ingredients
-      .sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
-  } catch (e) {
-    const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
-    if (ingredients.length) return ingredients.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
-    throw e
-  }
+  const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
+  return ingredients.sort((a, b) => a.nameAr.localeCompare(b.nameAr, 'ar'))
 }
 
 export async function createIngredient(
   data: Omit<Ingredient, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Ingredient> {
   const now = Date.now()
-  const id = generateId()
-  const ingredient: Ingredient = {
-    ...data,
-    id,
-    createdAt: now,
-    updatedAt: now
-  }
-  if (isAppOffline()) {
-    await cacheDocs(COLLECTIONS.ingredients, [ingredient])
-    return ingredient
-  }
-  await setDoc(
-    doc(collections.ingredients(), id),
-    omitUndefined(stripId(ingredient) as Record<string, unknown>)
-  )
+  const ingredient: Ingredient = { ...data, id: generateId(), createdAt: now, updatedAt: now }
   await cacheDocs(COLLECTIONS.ingredients, [ingredient])
   return ingredient
 }
@@ -75,35 +31,24 @@ export async function updateIngredient(
   id: string,
   patch: Partial<Pick<Ingredient, 'nameAr' | 'unit' | 'lowStockThreshold' | 'active'>>
 ): Promise<void> {
-  if (isAppOffline()) {
-    const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
-    const cached = ingredients.find((ingredient) => ingredient.id === id)
-    if (cached) await cacheDocs(COLLECTIONS.ingredients, [{ ...cached, ...patch, updatedAt: Date.now() }])
-    return
-  }
-  await updateDoc(
-    doc(collections.ingredients(), id),
-    omitUndefined({ ...patch, updatedAt: Date.now() })
-  )
-}
-
-async function isIngredientUsedInRecipes(ingredientId: string): Promise<boolean> {
-  const snap = await getDocs(collections.recipes())
-  return snap.docs.some((d) => {
-    const lines = (d.data().lines ?? []) as Array<{ ingredientId: string }>
-    return lines.some((l) => l.ingredientId === ingredientId)
-  })
+  const ingredients = await getCachedDocs<Ingredient>(COLLECTIONS.ingredients)
+  const cached = ingredients.find((i) => i.id === id)
+  if (!cached) return
+  await cacheDocs(COLLECTIONS.ingredients, [{ ...cached, ...patch, updatedAt: Date.now() }])
 }
 
 export async function deleteIngredient(id: string): Promise<void> {
-  if (isAppOffline()) throw new Error('لا يمكن الحذف أثناء عدم الاتصال')
-  if (await isIngredientUsedInRecipes(id)) {
+  // Check if used in any recipe
+  const recipes = await getCachedDocs<{ lines?: Array<{ ingredientId: string }> }>(
+    COLLECTIONS.recipes
+  )
+  const used = recipes.some((r) => (r.lines ?? []).some((l) => l.ingredientId === id))
+  if (used) {
     throw new Error('لا يمكن الحذف — المكوّن مستخدم في وصفة. احذف الصنف من القائمة أولاً.')
   }
-  await deleteDoc(doc(collections.ingredients(), id))
+  await dbDelete(COLLECTIONS.ingredients, id)
 }
 
-/** All stock changes go through this — never update stock directly */
 export async function recordInventoryTransaction(params: {
   ingredientId: string
   type: InventoryTransactionType
@@ -130,16 +75,6 @@ export async function recordInventoryTransaction(params: {
     createdBy: params.createdBy,
     createdAt: Date.now()
   }
-  if (isAppOffline()) {
-    await cacheDocs(COLLECTIONS.inventoryTransactions, [tx])
-    return tx
-  }
-  await trackWrite(() =>
-    setDoc(
-      doc(collections.inventoryTransactions(), tx.id),
-      omitUndefined(tx as unknown as Record<string, unknown>)
-    )
-  )
   await cacheDocs(COLLECTIONS.inventoryTransactions, [tx])
   return tx
 }
@@ -147,30 +82,9 @@ export async function recordInventoryTransaction(params: {
 export async function listInventoryTransactions(
   ingredientId?: string
 ): Promise<InventoryTransaction[]> {
-  if (isAppOffline()) {
-    let transactions = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
-    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
-    return transactions.sort((a, b) => b.createdAt - a.createdAt)
-  }
-  try {
-    const base = query(
-      collections.inventoryTransactions(),
-      orderBy('createdAt', 'desc')
-    )
-    const q = ingredientId
-      ? query(base, where('ingredientId', '==', ingredientId))
-      : base
-    const snap = await getDocs(q)
-    const remoteTransactions = snap.docs.map((d) => mapDoc<InventoryTransaction>(d))
-    let transactions = await mergeAndCacheLocalFirst(COLLECTIONS.inventoryTransactions, remoteTransactions)
-    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
-    return transactions.sort((a, b) => b.createdAt - a.createdAt)
-  } catch (e) {
-    let transactions = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
-    if (ingredientId) transactions = transactions.filter((tx) => tx.ingredientId === ingredientId)
-    if (transactions.length) return transactions.sort((a, b) => b.createdAt - a.createdAt)
-    throw e
-  }
+  let txs = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
+  if (ingredientId) txs = txs.filter((tx) => tx.ingredientId === ingredientId)
+  return txs.sort((a, b) => b.createdAt - a.createdAt)
 }
 
 export async function getIngredientStocks(): Promise<IngredientStock[]> {
@@ -226,7 +140,6 @@ export async function recordWaste(params: {
   })
 }
 
-/** Signed quantity: positive = add stock, negative = remove */
 export async function recordAdjustment(params: {
   ingredientId: string
   quantity: number
@@ -234,9 +147,7 @@ export async function recordAdjustment(params: {
   noteAr?: string
   createdBy: string
 }): Promise<InventoryTransaction> {
-  if (params.quantity === 0) {
-    throw new Error('كمية التسوية يجب أن تكون غير صفر')
-  }
+  if (params.quantity === 0) throw new Error('كمية التسوية يجب أن تكون غير صفر')
   return recordInventoryTransaction({
     ...params,
     type: 'adjustment',

@@ -42,6 +42,7 @@ export interface ElectronAPI {
     status?: { valid: boolean; reason?: string }
     error?: string
   }>
+  activateMasterKey: (key: string) => Promise<{ ok: boolean; error?: string }>
   getLocalStoreStatus: () => Promise<{
     ok: boolean
     path: string
@@ -54,6 +55,16 @@ export interface ElectronAPI {
   ) => Promise<{ ok: boolean }>
   getCachedDocuments: (collectionName: string) => Promise<unknown[]>
   getCachedDocument: (collectionName: string, documentId: string) => Promise<unknown | null>
+  deleteCachedDocument: (collectionName: string, documentId: string) => Promise<{ ok: boolean; deleted: boolean }>
+
+  // Sync outbox
+  outboxGetPending: () => Promise<unknown[]>
+  outboxEnqueue: (entityType: string, entityId: string, operation: 'set' | 'delete', payload: unknown) => Promise<{ ok: boolean }>
+  outboxMarkSynced: (ids: string[]) => Promise<{ ok: boolean }>
+  outboxMarkFailed: (ids: string[]) => Promise<{ ok: boolean }>
+  outboxResetFailed: () => Promise<{ ok: boolean }>
+  outboxCountPending: () => Promise<{ count: number }>
+  devResetDatabase: () => Promise<{ ok: boolean; error?: string }>
 
   // Auto-updater — actions
   updaterCheckNow: () => Promise<void>

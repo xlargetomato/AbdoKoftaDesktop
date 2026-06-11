@@ -1,52 +1,28 @@
-import { useEffect, useRef } from 'react'
-import { onAuthStateChanged, signOut, auth } from '@renderer/lib/firebase'
-import { useAuthStore } from './auth-store'
-import { fetchAppUser } from './auth-service'
-
 /**
- * Restores session on app load only.
- * Does not fight with LoginPage — never clears user on transient Firestore errors.
+ * Restores the user session from SQLite on app load.
+ * No Firebase Auth dependency — session is stored locally.
  */
+import { useEffect } from 'react'
+import { useAuthStore } from './auth-store'
+import { restoreSessionFromLocal } from './auth-service'
+
 export function useAuthBootstrap(): void {
   const setUser = useAuthStore((s) => s.setUser)
   const setLoading = useAuthStore((s) => s.setLoading)
-  const initialCheckDone = useRef(false)
 
   useEffect(() => {
     setLoading(true)
 
-    const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser) {
-        if (initialCheckDone.current) {
-          useAuthStore.getState().setUser(null)
-        } else {
-          setUser(null)
-        }
-        initialCheckDone.current = true
-        return
-      }
-
-      try {
-        const appUser = await fetchAppUser(fbUser.uid)
-        if (!appUser?.active) {
-          console.warn('[auth] profile missing or inactive for', fbUser.uid)
-          await signOut(auth)
-          setUser(null)
-        } else {
-          setUser(appUser)
-        }
-      } catch (e) {
-        console.error('[auth bootstrap] profile load failed:', e)
-        // Keep existing store user if login just set it; only clear on cold start
-        if (!initialCheckDone.current) {
-          setUser(null)
-        }
-      } finally {
-        initialCheckDone.current = true
+    restoreSessionFromLocal()
+      .then((user) => {
+        setUser(user)
+      })
+      .catch((e) => {
+        console.error('[auth bootstrap] session restore failed:', e)
+        setUser(null)
+      })
+      .finally(() => {
         setLoading(false)
-      }
-    })
-
-    return () => unsub()
+      })
   }, [setUser, setLoading])
 }

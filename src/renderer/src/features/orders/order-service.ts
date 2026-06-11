@@ -1,14 +1,18 @@
-import {
-  getDocs,
-  updateDoc,
-  query,
-  orderBy,
-  where,
-  writeBatch,
-  getDoc,
-  deleteField
-} from 'firebase/firestore'
-import type { CashDrawerTransaction, DiningTable, InventoryTransaction, MenuItem, Order, OrderItem, OrderType, Payment } from '@shared/types'
+/**
+ * Order service — SQLite primary database.
+ * All order lifecycle operations read/write SQLite directly.
+ * Firebase receives changes automatically via the outbox.
+ */
+import type {
+  CashDrawerTransaction,
+  DiningTable,
+  InventoryTransaction,
+  MenuItem,
+  Order,
+  OrderItem,
+  OrderType,
+  Payment
+} from '@shared/types'
 import {
   recipeDeductionLines,
   mergeDeductionLines
@@ -18,25 +22,55 @@ import {
   orderTotal,
   lineTotal
 } from '@shared/services/order-calculator'
-import { collections, doc, getDb } from '@renderer/lib/firebase'
-import { trackWrite } from '../sync/sync-store'
-import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
-import { generateId } from '@renderer/lib/utils/id'
-import { omitUndefined } from '@renderer/lib/utils/firestore-data'
-import { getRecipe } from '../menu/menu-service'
+import { COLLECTIONS } from '@shared/constants/collections'
 import { SETTINGS_DOC_ID } from '@shared/schema/firestore-schema'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
-import { nextLocalShiftOrderReference } from '@renderer/lib/offline/order-number'
+import { cacheDocs, getCachedDoc, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { generateId } from '@renderer/lib/utils/id'
+import { getRecipe } from '../menu/menu-service'
 import { ensureOpenShift } from '../shifts/shift-service'
-import { COLLECTIONS } from '@shared/constants/collections'
-import {
-  cacheDocs,
-  getCachedDoc,
-  getCachedDocs,
-  isAppOffline,
-  mergeAndCacheLocalFirst
-} from '@renderer/lib/offline/sqlite-cache'
+import { nextLocalShiftOrderReference } from '@renderer/lib/offline/order-number'
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export async function getSettings(): Promise<AppSettings> {
+  const defaults: AppSettings = {
+    id: SETTINGS_DOC_ID,
+    restaurantNameAr: RESTAURANT_NAME_AR,
+    currencySymbol: 'ج.م',
+    pinEnabled: false,
+    autoLockMinutes: 5,
+    nextOrderNumber: 1,
+    updatedAt: Date.now()
+  }
+  const cached = await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)
+  return cached ?? defaults
+}
+
+export async function updateSettings(
+  patch: Partial<
+    Pick<
+      AppSettings,
+      | 'restaurantNameAr'
+      | 'currencySymbol'
+      | 'receiptFooterAr'
+      | 'phoneNumber'
+      | 'primaryColor'
+      | 'pinEnabled'
+      | 'autoLockMinutes'
+    >
+  >
+): Promise<void> {
+  const current = await getSettings()
+  await cacheDocs(COLLECTIONS.settings, [{ ...current, ...patch, updatedAt: Date.now() }])
+}
+
+// ---------------------------------------------------------------------------
+// Cart types
+// ---------------------------------------------------------------------------
 
 export interface CartLine {
   menuItemId: string
@@ -50,62 +84,9 @@ export interface CartLine {
   noteAr?: string
 }
 
-interface CompleteOrderParams {
-  cashierId: string
-  cashierName: string
-  cashierCode?: string
-  lines: CartLine[]
-  orderNoteAr?: string
-  orderType?: OrderType
-  table?: Pick<DiningTable, 'id' | 'nameAr' | 'categoryAr'>
-  paymentMethod?: 'cash' | 'card'
-}
-
-export async function getSettings(): Promise<AppSettings> {
-  const defaults: AppSettings = {
-    id: SETTINGS_DOC_ID,
-    restaurantNameAr: RESTAURANT_NAME_AR,
-    currencySymbol: 'ج.م',
-    pinEnabled: false,
-    autoLockMinutes: 5,
-    nextOrderNumber: 1,
-    updatedAt: Date.now()
-  }
-  const cachedSettings = await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)
-  if (cachedSettings) return cachedSettings
-  if (isAppOffline()) return defaults
-  try {
-    const snap = await getDoc(doc(collections.settings(), SETTINGS_DOC_ID))
-    if (!snap.exists()) return defaults
-    const settings = mapDoc<AppSettings>(snap as never)
-    await cacheDocs(COLLECTIONS.settings, [settings])
-    return settings
-  } catch {
-    return (await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)) ?? defaults
-  }
-}
-
-export async function updateSettings(
-  patch: Partial<Pick<AppSettings, 'restaurantNameAr' | 'currencySymbol' | 'receiptFooterAr' | 'phoneNumber' | 'primaryColor' | 'pinEnabled' | 'autoLockMinutes'>>
-): Promise<void> {
-  if (isAppOffline()) {
-    const current = await getSettings()
-    await cacheDocs(COLLECTIONS.settings, [{
-      ...current,
-      ...patch,
-      updatedAt: Date.now()
-    }])
-    return
-  }
-  const data: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(patch)) {
-    data[key] = value === undefined ? deleteField() : value
-  }
-  await updateDoc(
-    doc(collections.settings(), SETTINGS_DOC_ID),
-    { ...data, updatedAt: Date.now() }
-  )
-}
+// ---------------------------------------------------------------------------
+// Complete order
+// ---------------------------------------------------------------------------
 
 export async function completeOrder(params: {
   cashierId: string
@@ -117,26 +98,37 @@ export async function completeOrder(params: {
   table?: Pick<DiningTable, 'id' | 'nameAr' | 'categoryAr'>
   paymentMethod?: 'cash' | 'card'
 }): Promise<Order> {
-  if (isAppOffline()) return _completeOrder(params, true)
-  return trackWrite(() => _completeOrder(params))
-}
-
-async function _completeOrder(params: CompleteOrderParams, offlineOnly = false): Promise<Order> {
   const subtotal = orderSubtotal(params.lines)
   const total = orderTotal(subtotal)
   const orderType = params.orderType ?? 'takeaway'
+
   if (orderType === 'takeaway' && !params.paymentMethod) {
     throw new Error('Payment method is required for takeaway orders')
   }
   if (orderType === 'dine_in' && !params.table) {
     throw new Error('Table is required for dine-in orders')
   }
+
   const shift = await ensureOpenShift({
     cashierId: params.cashierId,
     cashierName: params.cashierName,
     cashierCode: params.cashierCode
   })
-  const { orderNumber, orderCode } = await nextShiftOrderReference(shift.id, params.cashierCode)
+
+  const existingOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
+    (o) => o.shiftId === shift.id
+  )
+  const maxShiftSequence = existingOrders.reduce(
+    (max, o) =>
+      o.orderNumber > 0 && o.orderNumber <= 999999 ? Math.max(max, o.orderNumber) : max,
+    0
+  )
+  const { orderNumber, orderCode } = nextLocalShiftOrderReference(
+    shift.id,
+    params.cashierCode,
+    maxShiftSequence
+  )
+
   const now = Date.now()
   const orderId = generateId()
   const isPaid = orderType === 'takeaway'
@@ -164,34 +156,20 @@ async function _completeOrder(params: CompleteOrderParams, offlineOnly = false):
     paidAt: isPaid ? now : undefined
   }
 
-  const batch = offlineOnly ? null : writeBatch(getDb())
-  batch?.set(
-    doc(collections.orders(), orderId),
-    omitUndefined(order as unknown as Record<string, unknown>)
-  )
-
-  const orderItems: OrderItem[] = params.lines.map((line) => {
-    const itemId = generateId()
-    const oi: OrderItem = {
-      id: itemId,
-      orderId,
-      menuItemId: line.menuItemId,
-      nameAr: line.nameAr,
-      unitPrice: line.unitPrice,
-      quantity: line.quantity,
-      sizeLabelAr: line.sizeLabelAr,
-      attachmentForMenuItemId: line.attachmentForMenuItemId,
-      unitLabel: line.unitLabel,
-      weightGrams: line.weightGrams,
-      lineTotal: lineTotal(line.unitPrice, line.quantity),
-      noteAr: line.noteAr
-    }
-    batch?.set(
-      doc(collections.orderItems(), itemId),
-      omitUndefined(oi as unknown as Record<string, unknown>)
-    )
-    return oi
-  })
+  const orderItems: OrderItem[] = params.lines.map((line) => ({
+    id: generateId(),
+    orderId,
+    menuItemId: line.menuItemId,
+    nameAr: line.nameAr,
+    unitPrice: line.unitPrice,
+    quantity: line.quantity,
+    sizeLabelAr: line.sizeLabelAr,
+    attachmentForMenuItemId: line.attachmentForMenuItemId,
+    unitLabel: line.unitLabel,
+    weightGrams: line.weightGrams,
+    lineTotal: lineTotal(line.unitPrice, line.quantity),
+    noteAr: line.noteAr
+  }))
 
   const payment: Payment | null = isPaid
     ? {
@@ -202,21 +180,14 @@ async function _completeOrder(params: CompleteOrderParams, offlineOnly = false):
         createdAt: now
       }
     : null
-  if (payment) batch?.set(doc(collections.payments(), payment.id), payment)
 
-  const inventoryTransactions = await inventoryTransactionsForOrder(
+  const inventoryTransactions = await buildInventoryTransactions(
     orderId,
     orderItems,
     params.cashierId,
     now,
     shift.id
   )
-  for (const tx of inventoryTransactions) {
-    batch?.set(
-      doc(collections.inventoryTransactions(), tx.id),
-      omitUndefined(tx as unknown as Record<string, unknown>)
-    )
-  }
 
   const drawerTransaction: CashDrawerTransaction | null = isPaid
     ? {
@@ -229,103 +200,45 @@ async function _completeOrder(params: CompleteOrderParams, offlineOnly = false):
         createdAt: now
       }
     : null
+
+  // Write everything to SQLite atomically (sequential awaits)
+  await cacheDocs(COLLECTIONS.orders, [order])
+  await cacheDocs(COLLECTIONS.orderItems, orderItems)
+  if (payment) await cacheDocs(COLLECTIONS.payments, [payment])
+  if (inventoryTransactions.length) {
+    await cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions)
+  }
   if (drawerTransaction) {
-    batch?.set(
-      doc(collections.cashDrawerTransactions(), drawerTransaction.id),
-      omitUndefined(drawerTransaction as unknown as Record<string, unknown>)
-    )
+    await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
   }
 
-  await batch?.commit()
-  const cacheWrites = [
-    cacheDocs(COLLECTIONS.orders, [order]),
-    cacheDocs(COLLECTIONS.orderItems, orderItems),
-    cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions)
-  ]
-  if (drawerTransaction) {
-    cacheWrites.push(cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction]))
-  }
-  await Promise.all(cacheWrites)
   return order
 }
 
-async function nextShiftOrderReference(
-  shiftId: string,
-  cashierCode?: string
-): Promise<{ orderNumber: number; orderCode: string }> {
-  let existingOrders: Order[] = []
-  if (isAppOffline()) {
-    existingOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
-      (order) => order.shiftId === shiftId
-    )
-  } else {
-    try {
-      const snap = await getDocs(query(collections.orders(), where('shiftId', '==', shiftId)))
-      const remoteOrders = snap.docs.map((d) => mapDoc<Order>(d))
-      const localOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
-        (order) => order.shiftId === shiftId
-      )
-      existingOrders = [
-        ...remoteOrders,
-        ...localOrders.filter((localOrder) => !remoteOrders.some((order) => order.id === localOrder.id))
-      ]
-    } catch {
-      existingOrders = (await getCachedDocs<Order>(COLLECTIONS.orders)).filter(
-        (order) => order.shiftId === shiftId
-      )
-    }
-  }
-
-  const maxShiftSequence = existingOrders.reduce((max, order) => {
-    return order.orderNumber > 0 && order.orderNumber <= 999999
-      ? Math.max(max, order.orderNumber)
-      : max
-  }, 0)
-
-  return nextLocalShiftOrderReference(shiftId, cashierCode, maxShiftSequence)
-}
-
-async function inventoryTransactionsForOrder(
+async function buildInventoryTransactions(
   orderId: string,
   items: OrderItem[],
   createdBy: string,
   createdAt: number,
   shiftId?: string
 ): Promise<InventoryTransaction[]> {
-  const allLines: Array<{
-    ingredientId: string
-    quantity: number
-    unit: string
-  }> = []
+  const allLines: Array<{ ingredientId: string; quantity: number; unit: string }> = []
 
   for (const item of items) {
-    let menuItem: Pick<MenuItem, 'recipeId'> | null = null
-    if (isAppOffline()) {
-      menuItem = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, item.menuItemId)
-    } else {
-      try {
-        const menuSnap = await getDoc(
-          doc(collections.menuItems(), item.menuItemId)
-        )
-        if (menuSnap.exists()) menuItem = menuSnap.data() as Pick<MenuItem, 'recipeId'>
-      } catch {
-        menuItem = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, item.menuItemId)
-      }
-    }
+    const menuItem = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, item.menuItemId)
     if (!menuItem?.recipeId) continue
     const recipe = await getRecipe(menuItem.recipeId)
     if (!recipe) continue
     allLines.push(...recipeDeductionLines(recipe, item.quantity))
   }
 
-  const merged = mergeDeductionLines(allLines)
-  return merged.map((line) => ({
+  return mergeDeductionLines(allLines).map((line) => ({
     id: generateId(),
     ingredientId: line.ingredientId,
-    type: 'sale',
+    type: 'sale' as const,
     quantity: line.quantity,
     unit: line.unit,
-    referenceType: 'order',
+    referenceType: 'order' as const,
     referenceId: orderId,
     shiftId,
     noteAr: 'خصم تلقائي من الطلب',
@@ -334,99 +247,53 @@ async function inventoryTransactionsForOrder(
   }))
 }
 
+// ---------------------------------------------------------------------------
+// Mark paid
+// ---------------------------------------------------------------------------
+
 export async function markOrderPaid(params: {
   orderId: string
   cashierId: string
   paymentMethod: 'cash' | 'card'
 }): Promise<Order | null> {
-  if (isAppOffline()) {
-    const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
-    if (!order || order.status === 'cancelled') return null
-    const now = Date.now()
-    const paidOrder: Order = {
-      ...order,
-      status: 'completed',
-      paymentStatus: 'paid',
-      paidAt: now,
-      completedAt: now,
-      updatedAt: now
-    }
-    const payment: Payment = {
-      id: generateId(),
-      orderId: order.id,
-      amount: order.total,
-      method: params.paymentMethod,
-      createdAt: now
-    }
-    const drawerTransaction: CashDrawerTransaction = {
-      id: generateId(),
-      type: 'sale',
-      amount: order.total,
-      shiftId: order.shiftId,
-      orderId: order.id,
-      createdBy: params.cashierId,
-      createdAt: now
-    }
-    await Promise.all([
-      cacheDocs(COLLECTIONS.orders, [paidOrder]),
-      cacheDocs(COLLECTIONS.payments, [payment]),
-      cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
-    ])
-    return paidOrder
+  const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
+  if (!order || order.status === 'cancelled') return null
+
+  const now = Date.now()
+  const paidOrder: Order = {
+    ...order,
+    status: 'completed',
+    paymentStatus: 'paid',
+    paidAt: now,
+    completedAt: now,
+    updatedAt: now
+  }
+  const payment: Payment = {
+    id: generateId(),
+    orderId: order.id,
+    amount: order.total,
+    method: params.paymentMethod,
+    createdAt: now
+  }
+  const drawerTransaction: CashDrawerTransaction = {
+    id: generateId(),
+    type: 'sale',
+    amount: order.total,
+    shiftId: order.shiftId,
+    orderId: order.id,
+    createdBy: params.cashierId,
+    createdAt: now
   }
 
-  return trackWrite(async () => {
-    const orderSnap = await getDoc(doc(collections.orders(), params.orderId))
-    if (!orderSnap.exists()) return null
-    const order = mapDoc<Order>(orderSnap)
-    if (order.status === 'cancelled') return null
-    const now = Date.now()
-    const paidOrder: Order = {
-      ...order,
-      status: 'completed',
-      paymentStatus: 'paid',
-      paidAt: now,
-      completedAt: now,
-      updatedAt: now
-    }
-    const payment: Payment = {
-      id: generateId(),
-      orderId: order.id,
-      amount: order.total,
-      method: params.paymentMethod,
-      createdAt: now
-    }
-    const drawerTransaction: CashDrawerTransaction = {
-      id: generateId(),
-      type: 'sale',
-      amount: order.total,
-      shiftId: order.shiftId,
-      orderId: order.id,
-      createdBy: params.cashierId,
-      createdAt: now
-    }
-    const batch = writeBatch(getDb())
-    batch.update(doc(collections.orders(), order.id), {
-      status: 'completed',
-      paymentStatus: 'paid',
-      paidAt: now,
-      completedAt: now,
-      updatedAt: now
-    })
-    batch.set(doc(collections.payments(), payment.id), payment)
-    batch.set(
-      doc(collections.cashDrawerTransactions(), drawerTransaction.id),
-      omitUndefined(drawerTransaction as unknown as Record<string, unknown>)
-    )
-    await batch.commit()
-    await Promise.all([
-      cacheDocs(COLLECTIONS.orders, [paidOrder]),
-      cacheDocs(COLLECTIONS.payments, [payment]),
-      cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
-    ])
-    return paidOrder
-  })
+  await cacheDocs(COLLECTIONS.orders, [paidOrder])
+  await cacheDocs(COLLECTIONS.payments, [payment])
+  await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
+  return paidOrder
 }
+
+// ---------------------------------------------------------------------------
+// Cancel order
+// ---------------------------------------------------------------------------
 
 export async function cancelOrder(params: {
   orderId: string
@@ -434,129 +301,57 @@ export async function cancelOrder(params: {
   reasonAr?: string
   inventoryMode: 'return' | 'waste'
 }): Promise<void> {
-  if (isAppOffline()) {
-    const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
-    if (!order) return
-    const now = Date.now()
-    const cancelledOrder: Order = {
-      ...order,
-      status: 'cancelled',
-      cancelledAt: now,
-      cancelledBy: params.cancelledBy,
-      cancelReasonAr: params.reasonAr,
-      cancelInventoryMode: params.inventoryMode,
-      updatedAt: now
-    }
-    const shouldReverseCash = order.status === 'completed' && order.paymentStatus !== 'unpaid'
-    const drawerTransaction: CashDrawerTransaction | null = shouldReverseCash
-      ? {
-          id: generateId(),
-          type: 'sale',
-          amount: -order.total,
-          shiftId: order.shiftId,
-          orderId: order.id,
-          noteAr: params.reasonAr || 'Cancelled order',
-          createdBy: params.cancelledBy,
-          createdAt: now
-        }
-      : null
-    const updates: Promise<void>[] = [cacheDocs(COLLECTIONS.orders, [cancelledOrder])]
-    if (drawerTransaction) {
-      updates.push(cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction]))
-    }
-    if (params.inventoryMode === 'return') {
-      updates.push(
-        inventoryReversalsForOrder(order.id, params.cancelledBy, now).then((reversals) =>
-          cacheDocs(COLLECTIONS.inventoryTransactions, reversals)
-        )
-      )
-    }
-    await Promise.all(updates)
-    return
+  const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
+  if (!order) return
+
+  const now = Date.now()
+  const cancelledOrder: Order = {
+    ...order,
+    status: 'cancelled',
+    cancelledAt: now,
+    cancelledBy: params.cancelledBy,
+    cancelReasonAr: params.reasonAr,
+    cancelInventoryMode: params.inventoryMode,
+    updatedAt: now
   }
 
-  await trackWrite(async () => {
-    const orderSnap = await getDoc(doc(collections.orders(), params.orderId))
-    if (!orderSnap.exists()) return
-    const order = mapDoc<Order>(orderSnap)
-    const now = Date.now()
-    const batch = writeBatch(getDb())
-
-    batch.update(doc(collections.orders(), params.orderId), {
-      status: 'cancelled',
-      cancelledAt: now,
-      cancelledBy: params.cancelledBy,
-      cancelReasonAr: params.reasonAr,
-      cancelInventoryMode: params.inventoryMode,
-      updatedAt: now
-    })
-
-    const shouldReverseCash = order.status === 'completed' && order.paymentStatus !== 'unpaid'
-    const drawerTransaction: CashDrawerTransaction | null = shouldReverseCash
-      ? {
-          id: generateId(),
-          type: 'sale',
-          amount: -order.total,
-          shiftId: order.shiftId,
-          orderId: order.id,
-          noteAr: params.reasonAr || 'Cancelled order',
-          createdBy: params.cancelledBy,
-          createdAt: now
-        }
-      : null
-    if (drawerTransaction) {
-      batch.set(
-        doc(collections.cashDrawerTransactions(), drawerTransaction.id),
-        omitUndefined(drawerTransaction as unknown as Record<string, unknown>)
-      )
-    }
-
-    if (params.inventoryMode === 'return') {
-      const reversals = await inventoryReversalsForOrder(order.id, params.cancelledBy, now)
-      for (const reversal of reversals) {
-        batch.set(
-          doc(collections.inventoryTransactions(), reversal.id),
-          omitUndefined(reversal as unknown as Record<string, unknown>)
-        )
+  const shouldReverseCash = order.status === 'completed' && order.paymentStatus !== 'unpaid'
+  const drawerTransaction: CashDrawerTransaction | null = shouldReverseCash
+    ? {
+        id: generateId(),
+        type: 'sale',
+        amount: -order.total,
+        shiftId: order.shiftId,
+        orderId: order.id,
+        noteAr: params.reasonAr || 'Cancelled order',
+        createdBy: params.cancelledBy,
+        createdAt: now
       }
-    }
+    : null
 
-    await batch.commit()
-    const cancelledOrder: Order = {
-      ...order,
-      status: 'cancelled',
-      cancelledAt: now,
-      cancelledBy: params.cancelledBy,
-      cancelReasonAr: params.reasonAr,
-      cancelInventoryMode: params.inventoryMode,
-      updatedAt: now
-    }
-    const cacheWrites: Promise<void>[] = [cacheDocs(COLLECTIONS.orders, [cancelledOrder])]
-    if (drawerTransaction) {
-      cacheWrites.push(cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction]))
-    }
-    await Promise.all(cacheWrites)
-  })
+  await cacheDocs(COLLECTIONS.orders, [cancelledOrder])
+  if (drawerTransaction) await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
+
+  if (params.inventoryMode === 'return') {
+    const reversals = await buildInventoryReversals(order.id, params.cancelledBy, now)
+    if (reversals.length) await cacheDocs(COLLECTIONS.inventoryTransactions, reversals)
+  }
 }
-async function inventoryReversalsForOrder(
+
+async function buildInventoryReversals(
   orderId: string,
   createdBy: string,
   createdAt: number
 ): Promise<InventoryTransaction[]> {
-  const saleTransactions = isAppOffline()
-    ? (await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions))
-        .filter((tx) => tx.referenceId === orderId && tx.type === 'sale')
-    : (await getDocs(query(collections.inventoryTransactions(), where('referenceId', '==', orderId)))).docs
-        .map((d) => mapDoc<InventoryTransaction>(d))
-        .filter((tx) => tx.type === 'sale')
-
-  return saleTransactions.map((tx) => ({
+  const allTxs = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
+  const saleTxs = allTxs.filter((tx) => tx.referenceId === orderId && tx.type === 'sale')
+  return saleTxs.map((tx) => ({
     id: generateId(),
     ingredientId: tx.ingredientId,
-    type: 'sale_reversal',
+    type: 'sale_reversal' as const,
     quantity: -tx.quantity,
     unit: tx.unit,
-    referenceType: 'order',
+    referenceType: 'order' as const,
     referenceId: orderId,
     shiftId: tx.shiftId,
     noteAr: 'عكس خصم مخزون لطلب ملغي',
@@ -565,99 +360,52 @@ async function inventoryReversalsForOrder(
   }))
 }
 
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
 export async function listOrders(limit = 50): Promise<Order[]> {
-  if (isAppOffline()) {
-    const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
-    return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
-  }
-  try {
-    const snap = await getDocs(
-      query(collections.orders(), orderBy('createdAt', 'desc'))
-    )
-    const remoteOrders = snap.docs.map((d) => mapDoc<Order>(d))
-    const orders = await mergeAndCacheLocalFirst(COLLECTIONS.orders, remoteOrders)
-    return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
-  } catch (e) {
-    const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
-    if (orders.length) return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
-    throw e
-  }
+  const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
+  return orders.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
 }
 
 export async function listUnpaidDineInOrders(): Promise<Order[]> {
   const orders = await listOrders(1000)
-  return orders.filter((order) =>
-    order.status !== 'cancelled' &&
-    (order.orderType ?? 'takeaway') === 'dine_in' &&
-    (order.paymentStatus === 'unpaid' || order.status === 'draft')
+  return orders.filter(
+    (o) =>
+      o.status !== 'cancelled' &&
+      (o.orderType ?? 'takeaway') === 'dine_in' &&
+      (o.paymentStatus === 'unpaid' || o.status === 'draft')
   )
 }
 
 export async function listUnpaidDeferredOrders(): Promise<Order[]> {
   const orders = await listOrders(1000)
-  return orders.filter((order) =>
-    order.status !== 'cancelled' &&
-    ((order.orderType ?? 'takeaway') === 'dine_in' || order.orderType === 'delivery') &&
-    (order.paymentStatus === 'unpaid' || order.status === 'draft')
-  )
-}
-
-export async function archiveOrders(orderIds: string[]): Promise<void> {
-  if (isAppOffline()) {
-    const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
-    await cacheDocs(
-      COLLECTIONS.orders,
-      orders
-        .filter((order) => orderIds.includes(order.id))
-        .map((order) => ({ ...order, archived: true, updatedAt: Date.now() }))
-    )
-    return
-  }
-  await Promise.all(
-    orderIds.map((id) =>
-      updateDoc(doc(collections.orders(), id), { archived: true, updatedAt: Date.now() })
-    )
-  )
-}
-
-export async function unarchiveOrders(orderIds: string[]): Promise<void> {
-  if (isAppOffline()) {
-    const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
-    await cacheDocs(
-      COLLECTIONS.orders,
-      orders
-        .filter((order) => orderIds.includes(order.id))
-        .map((order) => ({ ...order, archived: false, updatedAt: Date.now() }))
-    )
-    return
-  }
-  await Promise.all(
-    orderIds.map((id) =>
-      updateDoc(doc(collections.orders(), id), { archived: false, updatedAt: Date.now() })
-    )
+  return orders.filter(
+    (o) =>
+      o.status !== 'cancelled' &&
+      ((o.orderType ?? 'takeaway') === 'dine_in' || o.orderType === 'delivery') &&
+      (o.paymentStatus === 'unpaid' || o.status === 'draft')
   )
 }
 
 export async function getOrderItems(orderId: string): Promise<OrderItem[]> {
-  if (isAppOffline()) {
-    return (await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)).filter(
-      (item) => item.orderId === orderId
-    )
-  }
-  try {
-    const q = query(
-      collections.orderItems(),
-      where('orderId', '==', orderId)
-    )
-    const snap = await getDocs(q)
-    const remoteItems = snap.docs.map((d) => mapDoc<OrderItem>(d))
-    const items = await mergeAndCacheLocalFirst(COLLECTIONS.orderItems, remoteItems)
-    return items.filter((item) => item.orderId === orderId)
-  } catch (e) {
-    const items = (await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)).filter(
-      (item) => item.orderId === orderId
-    )
-    if (items.length) return items
-    throw e
-  }
+  const items = await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)
+  return items.filter((item) => item.orderId === orderId)
+}
+
+export async function archiveOrders(orderIds: string[]): Promise<void> {
+  const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
+  const updates = orders
+    .filter((o) => orderIds.includes(o.id))
+    .map((o) => ({ ...o, archived: true, updatedAt: Date.now() }))
+  if (updates.length) await cacheDocs(COLLECTIONS.orders, updates)
+}
+
+export async function unarchiveOrders(orderIds: string[]): Promise<void> {
+  const orders = await getCachedDocs<Order>(COLLECTIONS.orders)
+  const updates = orders
+    .filter((o) => orderIds.includes(o.id))
+    .map((o) => ({ ...o, archived: false, updatedAt: Date.now() }))
+  if (updates.length) await cacheDocs(COLLECTIONS.orders, updates)
 }

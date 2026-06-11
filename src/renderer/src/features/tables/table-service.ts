@@ -1,36 +1,16 @@
-import { deleteDoc, getDocs, orderBy, query, setDoc, updateDoc } from 'firebase/firestore'
+/**
+ * Dining tables service — SQLite primary database.
+ */
 import type { DiningTable } from '@shared/types'
 import { COLLECTIONS } from '@shared/constants/collections'
-import { collections, doc } from '@renderer/lib/firebase'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { dbDelete } from '@renderer/lib/db/sqlite-db'
 import { generateId } from '@renderer/lib/utils/id'
-import { omitUndefined } from '@renderer/lib/utils/firestore-data'
-import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
-import {
-  cacheDocs,
-  getCachedDocs,
-  isAppOffline,
-  mergeAndCacheLocalFirst
-} from '@renderer/lib/offline/sqlite-cache'
-import { trackWrite } from '../sync/sync-store'
 
 export async function listDiningTables(includeInactive = false): Promise<DiningTable[]> {
-  let tables: DiningTable[]
-  if (isAppOffline()) {
-    tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
-  } else {
-    try {
-      const snap = await getDocs(query(collections.diningTables(), orderBy('sortOrder', 'asc')))
-      const remoteTables = snap.docs.map((d) => mapDoc<DiningTable>(d))
-      tables = await mergeAndCacheLocalFirst(COLLECTIONS.diningTables, remoteTables)
-    } catch (e) {
-      tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
-      if (!tables.length) throw e
-    }
-  }
-
-  return tables
-    .filter((table) => includeInactive || table.active)
-    .sort((a, b) => a.sortOrder - b.sortOrder || a.nameAr.localeCompare(b.nameAr))
+  let tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
+  if (!includeInactive) tables = tables.filter((t) => t.active)
+  return tables.sort((a, b) => a.sortOrder - b.sortOrder || a.nameAr.localeCompare(b.nameAr))
 }
 
 export async function saveDiningTable(
@@ -46,44 +26,17 @@ export async function saveDiningTable(
     createdAt: input.createdAt ?? now,
     updatedAt: now
   }
-
-  if (isAppOffline()) {
-    await cacheDocs(COLLECTIONS.diningTables, [table])
-    return table
-  }
-
-  await trackWrite(() =>
-    setDoc(
-      doc(collections.diningTables(), table.id),
-      omitUndefined(table as unknown as Record<string, unknown>),
-      { merge: true }
-    )
-  )
   await cacheDocs(COLLECTIONS.diningTables, [table])
   return table
 }
 
 export async function setDiningTableActive(tableId: string, active: boolean): Promise<void> {
-  const now = Date.now()
-  if (isAppOffline()) {
-    const tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
-    const table = tables.find((t) => t.id === tableId)
-    if (table) await cacheDocs(COLLECTIONS.diningTables, [{ ...table, active, updatedAt: now }])
-    return
-  }
-
-  await trackWrite(() =>
-    updateDoc(doc(collections.diningTables(), tableId), { active, updatedAt: now })
-  )
   const tables = await getCachedDocs<DiningTable>(COLLECTIONS.diningTables)
   const table = tables.find((t) => t.id === tableId)
-  if (table) await cacheDocs(COLLECTIONS.diningTables, [{ ...table, active, updatedAt: now }])
+  if (!table) return
+  await cacheDocs(COLLECTIONS.diningTables, [{ ...table, active, updatedAt: Date.now() }])
 }
 
 export async function deleteDiningTable(tableId: string): Promise<void> {
-  if (isAppOffline()) {
-    await setDiningTableActive(tableId, false)
-    return
-  }
-  await trackWrite(() => deleteDoc(doc(collections.diningTables(), tableId)))
+  await dbDelete(COLLECTIONS.diningTables, tableId)
 }

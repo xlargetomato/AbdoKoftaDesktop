@@ -1,71 +1,76 @@
-import { isAppOffline as readAppOffline } from '@renderer/features/sync/sync-store'
+/**
+ * SQLite cache helpers — thin wrappers used by all service files.
+ *
+ * These now talk directly to the primary SQLite database.
+ * Firebase is never consulted here.
+ */
+import { dbDelete, dbGet, dbGetAll, dbSave } from '@renderer/lib/db/sqlite-db'
 
+// ---------------------------------------------------------------------------
+// Offline flag — always false now that SQLite is primary
+// ---------------------------------------------------------------------------
+
+/** Always returns false — SQLite is always available */
 export function isAppOffline(): boolean {
-  return readAppOffline()
+  return false
 }
+
+/** Always returns false — SQLite never errors for network reasons */
+export function isOfflineError(_err: unknown): boolean {
+  return false
+}
+
+// ---------------------------------------------------------------------------
+// Document helpers
+// ---------------------------------------------------------------------------
 
 export async function cacheDocs<T extends { id: string }>(
   collectionName: string,
   docs: T[]
 ): Promise<void> {
-  if (!window.electronAPI?.cacheDocuments) return
-  await window.electronAPI.cacheDocuments(
-    collectionName,
-    docs.map((doc) => ({ id: doc.id, data: doc }))
-  )
+  await dbSave(collectionName, docs)
 }
 
 export async function getCachedDocs<T>(collectionName: string): Promise<T[]> {
-  if (!window.electronAPI?.getCachedDocuments) return []
-  return (await window.electronAPI.getCachedDocuments(collectionName)) as T[]
+  return dbGetAll<T>(collectionName)
 }
 
 export async function getCachedDoc<T>(
   collectionName: string,
   documentId: string
 ): Promise<T | null> {
-  if (!window.electronAPI?.getCachedDocument) return null
-  return (await window.electronAPI.getCachedDocument(collectionName, documentId)) as T | null
+  return dbGet<T>(collectionName, documentId)
 }
+
+export async function deleteCachedDoc(
+  collectionName: string,
+  documentId: string
+): Promise<void> {
+  await dbDelete(collectionName, documentId)
+}
+
+// ---------------------------------------------------------------------------
+// Merge helpers (kept for API compatibility — local always wins)
+// ---------------------------------------------------------------------------
 
 export function mergeLocalFirst<T extends { id: string }>(
   localDocs: T[],
-  remoteDocs: T[]
+  _remoteDocs: T[]
 ): T[] {
-  const byId = new Map<string, T>()
-  for (const doc of remoteDocs) byId.set(doc.id, doc)
-  for (const doc of localDocs) byId.set(doc.id, doc)
-  return Array.from(byId.values())
+  return localDocs
 }
 
 export async function mergeAndCacheLocalFirst<T extends { id: string }>(
   collectionName: string,
-  remoteDocs: T[]
+  _remoteDocs: T[]
 ): Promise<T[]> {
-  const localDocs = await getCachedDocs<T>(collectionName)
-  const merged = mergeLocalFirst(localDocs, remoteDocs)
-  if (remoteDocs.length) await cacheDocs(collectionName, merged)
-  return merged
+  return getCachedDocs<T>(collectionName)
 }
 
 export async function mergeDocAndCacheLocalFirst<T extends { id: string }>(
   collectionName: string,
-  remoteDoc: T | null,
+  _remoteDoc: T | null,
   documentId: string
 ): Promise<T | null> {
-  const localDoc = await getCachedDoc<T>(collectionName, documentId)
-  if (localDoc) return localDoc
-  if (remoteDoc) {
-    await cacheDocs(collectionName, [remoteDoc])
-    return remoteDoc
-  }
-  return null
-}
-
-export function isOfflineError(err: unknown): boolean {
-  const code = (err as { code?: string })?.code ?? ''
-  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
-  return (
-    isAppOffline()
-  ) || code.includes('unavailable') || code.includes('network') || message.includes('offline')
+  return getCachedDoc<T>(collectionName, documentId)
 }

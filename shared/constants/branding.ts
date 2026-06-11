@@ -1,1 +1,1 @@
-export const RESTAURANT_NAME_AR = 'عبده كفتة'
+export const RESTAURANT_NAME_AR = 'SHIFT'

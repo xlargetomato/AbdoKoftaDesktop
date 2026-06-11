@@ -1,20 +1,13 @@
-import { getDocs, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore'
+/**
+ * Shift service — SQLite primary database.
+ */
 import type { CashDrawerTransaction, InventoryTransaction, Order, Shift } from '@shared/types'
-import { collections, doc } from '@renderer/lib/firebase'
+import { COLLECTIONS } from '@shared/constants/collections'
+import { cacheDocs, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
 import { generateId } from '@renderer/lib/utils/id'
-import { omitUndefined } from '@renderer/lib/utils/firestore-data'
-import { mapDoc } from '@renderer/lib/utils/firestore-mapper'
 import { listOrders } from '../orders/order-service'
 import { listInventoryTransactions, listIngredients } from '../inventory/inventory-service'
 import { listCashDrawerTransactions } from '../cash/cash-service'
-import { trackWrite } from '../sync/sync-store'
-import { COLLECTIONS } from '@shared/constants/collections'
-import {
-  cacheDocs,
-  getCachedDocs,
-  isAppOffline,
-  mergeAndCacheLocalFirst
-} from '@renderer/lib/offline/sqlite-cache'
 
 export interface ShiftSummary {
   shift: Shift
@@ -29,14 +22,11 @@ export interface ShiftSummary {
   cashTransactions: CashDrawerTransaction[]
 }
 
-async function patchCachedShifts(
-  shiftIds: string[],
-  patch: Partial<Shift>
-): Promise<void> {
+async function patchCachedShifts(shiftIds: string[], patch: Partial<Shift>): Promise<void> {
   const cached = await getCachedDocs<Shift>(COLLECTIONS.shifts)
   const updates = cached
-    .filter((shift) => shiftIds.includes(shift.id))
-    .map((shift) => ({ ...shift, ...patch, updatedAt: Date.now() }))
+    .filter((s) => shiftIds.includes(s.id))
+    .map((s) => ({ ...s, ...patch, updatedAt: Date.now() }))
   if (updates.length) await cacheDocs(COLLECTIONS.shifts, updates)
 }
 
@@ -55,11 +45,9 @@ function orderMatchesShiftCashier(order: Order, shift: Shift): boolean {
   if (
     normalizeIdentity(order.cashierCode) &&
     normalizeIdentity(order.cashierCode) === normalizeIdentity(shift.cashierCode)
-  ) {
-    return true
-  }
-  const orderCashierName = normalizeIdentity(order.cashierName)
-  return !!orderCashierName && orderCashierName === normalizeIdentity(shift.cashierName)
+  ) return true
+  const orderName = normalizeIdentity(order.cashierName)
+  return !!orderName && orderName === normalizeIdentity(shift.cashierName)
 }
 
 function orderBelongsToShift(order: Order, shift: Shift): boolean {
@@ -84,44 +72,14 @@ function transactionBelongsToShift(
 }
 
 export async function listShifts(includeArchived = false): Promise<Shift[]> {
-  let shifts: Shift[]
-  if (isAppOffline()) {
-    shifts = (await getCachedDocs<Shift>(COLLECTIONS.shifts)).sort((a, b) => b.openedAt - a.openedAt)
-  } else {
-    try {
-      const snap = await getDocs(query(collections.shifts(), orderBy('openedAt', 'desc')))
-      const remoteShifts = snap.docs.map((d) => mapDoc<Shift>(d))
-      shifts = await mergeAndCacheLocalFirst(COLLECTIONS.shifts, remoteShifts)
-      shifts = shifts.sort((a, b) => b.openedAt - a.openedAt)
-    } catch (e) {
-      shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
-      if (!shifts.length) throw e
-      shifts = shifts.sort((a, b) => b.openedAt - a.openedAt)
-    }
-  }
-  return includeArchived ? shifts : shifts.filter((s) => !s.archived)
+  const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
+  const sorted = shifts.sort((a, b) => b.openedAt - a.openedAt)
+  return includeArchived ? sorted : sorted.filter((s) => !s.archived)
 }
 
 export async function getOpenShiftForCashier(cashierId: string): Promise<Shift | null> {
-  if (isAppOffline()) {
-    const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
-    return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
-  }
-  try {
-    const snap = await getDocs(
-      query(
-        collections.shifts(),
-        where('cashierId', '==', cashierId),
-        where('status', '==', 'open')
-      )
-    )
-    const remoteShifts = snap.docs.map((d) => mapDoc<Shift>(d))
-    const shifts = await mergeAndCacheLocalFirst(COLLECTIONS.shifts, remoteShifts)
-    return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
-  } catch {
-    const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
-    return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
-  }
+  const shifts = await getCachedDocs<Shift>(COLLECTIONS.shifts)
+  return shifts.find((s) => s.cashierId === cashierId && s.status === 'open') ?? null
 }
 
 export async function ensureOpenShift(params: {
@@ -144,77 +102,21 @@ export async function ensureOpenShift(params: {
     createdAt: now,
     updatedAt: now
   }
-  if (isAppOffline()) {
-    await cacheDocs(COLLECTIONS.shifts, [shift])
-    return shift
-  }
-  await trackWrite(() =>
-    setDoc(
-      doc(collections.shifts(), shift.id),
-      omitUndefined(shift as unknown as Record<string, unknown>)
-    )
-  )
   await cacheDocs(COLLECTIONS.shifts, [shift])
   return shift
 }
 
 export async function closeShift(shiftId: string, closedBy: string): Promise<void> {
   const now = Date.now()
-  if (isAppOffline()) {
-    await patchCachedShifts([shiftId], {
-      status: 'closed',
-      closedAt: now,
-      closedBy,
-      updatedAt: now
-    })
-    return
-  }
-  await updateDoc(doc(collections.shifts(), shiftId), {
-    status: 'closed',
-    closedAt: now,
-    closedBy,
-    updatedAt: now
-  })
-  await patchCachedShifts([shiftId], {
-    status: 'closed',
-    closedAt: now,
-    closedBy,
-    updatedAt: now
-  })
+  await patchCachedShifts([shiftId], { status: 'closed', closedAt: now, closedBy, updatedAt: now })
 }
 
 export async function archiveShifts(shiftIds: string[]): Promise<void> {
-  const now = Date.now()
-  if (isAppOffline()) {
-    await patchCachedShifts(shiftIds, { archived: true, updatedAt: now })
-    return
-  }
-  await Promise.all(
-    shiftIds.map((id) =>
-      updateDoc(doc(collections.shifts(), id), {
-        archived: true,
-        updatedAt: now
-      })
-    )
-  )
-  await patchCachedShifts(shiftIds, { archived: true, updatedAt: now })
+  await patchCachedShifts(shiftIds, { archived: true, updatedAt: Date.now() })
 }
 
 export async function unarchiveShifts(shiftIds: string[]): Promise<void> {
-  const now = Date.now()
-  if (isAppOffline()) {
-    await patchCachedShifts(shiftIds, { archived: false, updatedAt: now })
-    return
-  }
-  await Promise.all(
-    shiftIds.map((id) =>
-      updateDoc(doc(collections.shifts(), id), {
-        archived: false,
-        updatedAt: now
-      })
-    )
-  )
-  await patchCachedShifts(shiftIds, { archived: false, updatedAt: now })
+  await patchCachedShifts(shiftIds, { archived: false, updatedAt: Date.now() })
 }
 
 export async function getUnarchivedShiftCount(): Promise<number> {
@@ -229,35 +131,40 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     listCashDrawerTransactions(),
     listIngredients()
   ])
+
   const orders = allOrders
     .filter((o) => orderBelongsToShift(o, shift))
     .sort((a, b) => a.createdAt - b.createdAt)
-  const orderIds = new Set(orders.map((order) => order.id))
+  const orderIds = new Set(orders.map((o) => o.id))
   const completedOrders = orders.filter((o) => o.status === 'completed')
   const cancelledOrders = orders.filter((o) => o.status === 'cancelled')
-  const suppliedInventory = inventoryTransactions.filter(
-    (tx) => transactionBelongsToShift(tx, shift, orderIds) && tx.type === 'purchase'
+
+  const shiftInventory = inventoryTransactions.filter((tx) =>
+    transactionBelongsToShift(tx, shift, orderIds)
   )
-  const usedInventory = inventoryTransactions.filter(
-    (tx) => transactionBelongsToShift(tx, shift, orderIds) && (tx.type === 'sale' || tx.type === 'waste')
+  const suppliedInventory = shiftInventory.filter((tx) => tx.type === 'purchase')
+  const usedInventory = shiftInventory.filter(
+    (tx) => tx.type === 'sale' || tx.type === 'waste'
   )
-  const ingredientMap = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient.nameAr]))
-  const withIngredientName = (
-    tx: InventoryTransaction
-  ): InventoryTransaction & { ingredientNameAr: string } => ({
-    ...tx,
-    ingredientNameAr: tx.ingredientNameAr?.trim() || ingredientMap.get(tx.ingredientId) || tx.ingredientId
-  })
-  const usedInventoryWithNames = usedInventory.map(withIngredientName)
-  const suppliedInventoryWithNames = suppliedInventory.map(withIngredientName)
   const shiftCashTransactions = cashTransactions.filter((tx) =>
     transactionBelongsToShift(tx, shift, orderIds)
   )
+
+  const ingredientMap = new Map(ingredients.map((i) => [i.id, i.nameAr]))
+  const withName = (tx: InventoryTransaction): InventoryTransaction & { ingredientNameAr: string } => ({
+    ...tx,
+    ingredientNameAr:
+      (tx as InventoryTransaction & { ingredientNameAr?: string }).ingredientNameAr?.trim() ||
+      ingredientMap.get(tx.ingredientId) ||
+      tx.ingredientId
+  })
+
   const revenue = completedOrders.reduce((sum, o) => sum + o.total, 0)
   const expenses = shiftCashTransactions
     .filter((tx) => tx.type !== 'sale' && tx.amount < 0)
     .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
   const drawerTotal = shiftCashTransactions.reduce((sum, tx) => sum + tx.amount, 0)
+
   return {
     shift,
     orders,
@@ -266,8 +173,8 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     revenue,
     drawerTotal,
     expenses,
-    suppliedInventory: suppliedInventoryWithNames,
-    usedInventory: usedInventoryWithNames,
+    suppliedInventory: suppliedInventory.map(withName),
+    usedInventory: usedInventory.map(withName),
     cashTransactions: shiftCashTransactions
   }
 }

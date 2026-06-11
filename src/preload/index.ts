@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('license:create-activation-request'),
   importLicense: (): Promise<{ ok: boolean; status?: unknown; error?: string }> =>
     ipcRenderer.invoke('license:import-license'),
+  activateMasterKey: (key: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('license:activate-master-key', key),
   getLocalStoreStatus: (): Promise<{ ok: boolean; path: string; pendingOutbox: number; error?: string }> =>
     ipcRenderer.invoke('local-store:get-status'),
   cacheDocuments: (
@@ -41,6 +43,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('local-cache:get-documents', collectionName),
   getCachedDocument: (collectionName: string, documentId: string): Promise<unknown | null> =>
     ipcRenderer.invoke('local-cache:get-document', collectionName, documentId),
+  deleteCachedDocument: (collectionName: string, documentId: string): Promise<{ ok: boolean; deleted: boolean }> =>
+    ipcRenderer.invoke('local-cache:delete-document', collectionName, documentId),
+
+  // Sync outbox
+  outboxGetPending: (): Promise<unknown[]> =>
+    ipcRenderer.invoke('outbox:get-pending'),
+  outboxEnqueue: (entityType: string, entityId: string, operation: 'set' | 'delete', payload: unknown): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('outbox:enqueue', entityType, entityId, operation, payload),
+  outboxMarkSynced: (ids: string[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('outbox:mark-synced', ids),
+  outboxMarkFailed: (ids: string[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('outbox:mark-failed', ids),
+  outboxResetFailed: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('outbox:reset-failed'),
+  outboxCountPending: (): Promise<{ count: number }> =>
+    ipcRenderer.invoke('outbox:count-pending'),
+  devResetDatabase: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('dev:reset-database'),
 
   // Auto-updater
   updaterCheckNow: (): Promise<void> =>

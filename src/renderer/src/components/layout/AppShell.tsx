@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
-import { signOut, auth } from '@renderer/lib/firebase'
+import { logoutUser } from '@renderer/features/auth/auth-service'
 import { useAuthStore } from '@renderer/features/auth/auth-store'
 import { SyncStatusBadge } from '@renderer/features/sync/SyncStatusBadge'
 import { navLinkEnd, MdLogout, type NavItem } from '@renderer/config/navigation'
@@ -9,6 +8,8 @@ import { MdSystemUpdate, MdClose, MdExpandMore, MdExpandLess, MdLock } from 'rea
 import { triggerCheckNow, useUpdateState } from '@renderer/components/UpdateNotification'
 import { usePinStore } from '@renderer/features/auth/pin-store'
 import { getUnarchivedShiftCount } from '@renderer/features/shifts/shift-service'
+import { getSettings } from '@renderer/features/orders/order-service'
+import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 
 interface AppShellProps {
   nav: NavItem[]
@@ -24,6 +25,7 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   const [showPopup, setShowPopup] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const [shiftBadge, setShiftBadge] = useState(0)
+  const [brandName, setBrandName] = useState(RESTAURANT_NAME_AR)
   const updateState = useUpdateState()
   const pinEnabled = usePinStore((s) => s.pinEnabled)
   const lockApp = usePinStore((s) => s.lock)
@@ -31,6 +33,13 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   useEffect(() => {
     window.electronAPI?.getAppVersion().then(setCurrentVersion).catch(() => {})
   }, [])
+
+  // Load restaurant name from settings (reflects changes without restart)
+  useEffect(() => {
+    void getSettings().then((s) => {
+      if (s.restaurantNameAr) setBrandName(s.restaurantNameAr)
+    }).catch(() => {})
+  }, [location.pathname]) // re-check on navigation so save in SettingsPage is reflected
 
   useEffect(() => {
     void getUnarchivedShiftCount().then(setShiftBadge).catch(() => {})
@@ -47,7 +56,7 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   }, [location.pathname, nav])
 
   async function handleLogout(): Promise<void> {
-    await signOut(auth)
+    await logoutUser()
     useAuthStore.getState().setUser(null)
     navigate('/login')
   }
@@ -67,7 +76,7 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
   return (
     <div className="app-shell">
       <aside className="app-sidebar" aria-label="القائمة الرئيسية">
-        <div className="app-sidebar__brand">{RESTAURANT_NAME_AR}</div>
+        <div className="app-sidebar__brand">{brandName}</div>
 
         <nav className="app-sidebar__nav">
           {nav.map((item) => {
