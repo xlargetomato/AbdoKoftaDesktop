@@ -141,6 +141,7 @@ function WallLayer({
   selectedWallId,
   onSelectWall,
   drawingWall,
+  onWallPointerDown,
 }: {
   walls: WallSegment[]
   width: number
@@ -148,6 +149,7 @@ function WallLayer({
   selectedWallId: string | null
   onSelectWall: (id: string | null) => void
   drawingWall: WallSegment | null
+  onWallPointerDown?: (e: React.PointerEvent<SVGLineElement>, id: string) => void
 }): React.ReactElement {
   return (
     <svg
@@ -163,7 +165,8 @@ function WallLayer({
           stroke={selectedWallId === w.id ? 'var(--color-primary)' : (w.color ?? WALL_COLOR)}
           strokeWidth={(w.thickness ?? WALL_W) + (selectedWallId === w.id ? 4 : 0)}
           strokeLinecap="round"
-          style={{ pointerEvents: 'visibleStroke', cursor: 'pointer' }}
+          style={{ pointerEvents: 'visibleStroke', cursor: 'grab' }}
+          onPointerDown={onWallPointerDown ? (e) => onWallPointerDown(e, w.id) : undefined}
           onClick={(e) => { e.stopPropagation(); onSelectWall(selectedWallId === w.id ? null : w.id) }}
         />
       ))}
@@ -461,9 +464,11 @@ export function FloorPlanPage(): React.ReactElement {
   const [editingFloor, setEditingFloor]   = useState<Floor | null>(null)
 
   // ── Drag refs — no state, zero re-renders during drag ──────────────────
-  type DragKind = 'table' | 'chair'
+  type DragKind = 'table' | 'chair' | 'wall'
   const dragging    = useRef<{ kind: DragKind; id: string } | null>(null)
   const dragOffset  = useRef({ x: 0, y: 0 })
+  /** For wall drag: stores start-of-drag original endpoints */
+  const wallDragOrigin = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const dragNodeRef = useRef<HTMLDivElement | null>(null)
   const canvasRef   = useRef<HTMLDivElement>(null)
   /** True once the pointer has moved >4px during a drag — used to distinguish click vs drag */
@@ -527,6 +532,50 @@ export function FloorPlanPage(): React.ReactElement {
     return () => clearTimeout(t)
   }, [msg])
 
+  // ── Keyboard shortcuts: Delete, Ctrl+/-, Ctrl+0 ───────────────────────
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      // Don't intercept when user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+      // ── Ctrl + zoom ─────────────────────────────────────────────────────
+      if (e.ctrlKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault()
+          setZoom((z) => Math.min(MAX_ZOOM, +(z + 0.1).toFixed(1)))
+          return
+        }
+        if (e.key === '-') {
+          e.preventDefault()
+          setZoom((z) => Math.max(MIN_ZOOM, +(z - 0.1).toFixed(1)))
+          return
+        }
+        if (e.key === '0') {
+          e.preventDefault()
+          setZoom(1)
+          return
+        }
+      }
+
+      // ── Delete / Backspace ───────────────────────────────────────────────
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        if (selectedTableId) {
+          void handleDeleteTable()
+        } else if (selectedChairId) {
+          handleRemoveChair()
+        } else if (selectedWallId) {
+          void handleDeleteWall()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTableId, selectedChairId, selectedWallId, activeFloor, walls])
+
   // ── Canvas coord helper ────────────────────────────────────────────────
   function canvasCoord(clientX: number, clientY: number): { x: number; y: number } {
     const r = canvasRef.current!.getBoundingClientRect()
@@ -579,7 +628,27 @@ export function FloorPlanPage(): React.ReactElement {
     setSelectedWallId(null)
   }
 
-  // ── Canvas pointer move ────────────────────────────────────────────────
+  // ── Wall drag ──────────────────────────────────────────────────────────
+  function handleWallPointerDown(e: React.PointerEvent<SVGLineElement>, id: string): void {
+    if (tool !== 'select' || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+
+    const wall = walls.find((w) => w.id === id)
+    if (!wall) return
+
+    const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
+    // dragOffset stores the pointer position at drag start
+    dragOffset.current    = { x: cx, y: cy }
+    wallDragOrigin.current = { x1: wall.x1, y1: wall.y1, x2: wall.x2, y2: wall.y2 }
+    dragging.current      = { kind: 'wall', id }
+    dragMoved.current     = false
+
+    setSelectedWallId(id)
+    setSelectedTableId(null)
+    setSelectedChairId(null)
+  }
   function handleCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>): void {
     const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
 
@@ -597,11 +666,12 @@ export function FloorPlanPage(): React.ReactElement {
       return
     }
 
-    if (!dragging.current || !dragNodeRef.current) return
+    if (!dragging.current) return
     e.preventDefault()
     dragMoved.current = true
 
     if (dragging.current.kind === 'table') {
+      if (!dragNodeRef.current) return
       const table = tables.find((t) => t.id === dragging.current!.id)
       if (!table) return
       const maxX = (activeFloor?.width  ?? 1200) - (table.w ?? DEFAULT_W)
@@ -610,8 +680,9 @@ export function FloorPlanPage(): React.ReactElement {
       const ny = Math.max(0, Math.min(snap(cy - dragOffset.current.y), maxY))
       dragNodeRef.current.style.left = `${nx}px`
       dragNodeRef.current.style.top  = `${ny}px`
-    } else {
-      // Chair — clamp to orbit around its table
+
+    } else if (dragging.current.kind === 'chair') {
+      if (!dragNodeRef.current) return
       const chairId = dragging.current.id
       const chair   = chairs.find((c) => c.id === chairId)
       const table   = chair ? tables.find((t) => t.id === chair.tableId) : null
@@ -630,6 +701,18 @@ export function FloorPlanPage(): React.ReactElement {
 
       dragNodeRef.current.style.left = `${rawX - CHAIR_R}px`
       dragNodeRef.current.style.top  = `${rawY - CHAIR_R}px`
+
+    } else if (dragging.current.kind === 'wall') {
+      // Wall drag — translate both endpoints by the delta from drag start
+      if (!wallDragOrigin.current) return
+      const dx = snap(cx - dragOffset.current.x)
+      const dy = snap(cy - dragOffset.current.y)
+      const origin = wallDragOrigin.current
+      setWalls((prev) => prev.map((w) =>
+        w.id === dragging.current!.id
+          ? { ...w, x1: origin.x1 + dx, y1: origin.y1 + dy, x2: origin.x2 + dx, y2: origin.y2 + dy }
+          : w
+      ))
     }
   }
 
@@ -660,7 +743,18 @@ export function FloorPlanPage(): React.ReactElement {
       return
     }
 
-    if (!dragging.current || !dragNodeRef.current) return
+    if (!dragging.current) return
+
+    // Wall drag commit — persist to SQLite
+    if (dragging.current.kind === 'wall') {
+      wallDragOrigin.current = null
+      dragging.current  = null
+      dragMoved.current = false
+      if (activeFloor) void saveFloor({ ...activeFloor, walls })
+      return
+    }
+
+    if (!dragNodeRef.current) return
 
     if (dragging.current.kind === 'table') {
       const id    = dragging.current.id
@@ -1103,6 +1197,7 @@ export function FloorPlanPage(): React.ReactElement {
                   selectedWallId={selectedWallId}
                   onSelectWall={(id) => { setSelectedWallId(id); setSelectedTableId(null); setSelectedChairId(null) }}
                   drawingWall={drawingWall}
+                  onWallPointerDown={tool === 'select' ? handleWallPointerDown : undefined}
                 />
 
                 {/* Tables */}
