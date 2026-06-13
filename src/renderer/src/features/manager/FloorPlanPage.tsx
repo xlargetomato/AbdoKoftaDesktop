@@ -1,202 +1,287 @@
 /**
- * FloorPlanPage — visual drag-and-drop table layout editor.
+ * FloorPlanPage — visual floor-plan editor.
  *
- * Design principles (performance on low-end hardware):
- *  - All drag operations update a ref, NOT state → zero React re-renders during drag
- *  - Only pointer-up commits position changes to state + SQLite
- *  - Tables rendered as CSS-transformed divs (GPU-composited layer per table)
- *  - Grid-snap at 20px keeps layout clean without extra computation
+ * Features:
+ *  • Drag tables freely on a grid-snapped canvas
+ *  • Each chair is an independent draggable element — drop it near any table to reassign
+ *  • Draw wall/line segments in "Draw Wall" mode
+ *  • Toggle table shape between square and circle directly from toolbar
+ *  • Floors (areas) with tabs — Salon / Garden / Rooftop …
+ *
+ * Performance contract:
+ *  • ALL drag operations mutate DOM refs only — zero React re-renders during drag
+ *  • React state is committed only on pointerup
  */
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import type { DiningTable, Floor, TableShape } from '@shared/types'
+import {
+  useCallback, useEffect, useRef, useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
+import type { DiningTable, Floor, TableShape, WallSegment } from '@shared/types'
 import {
   listFloors, saveFloor, deleteFloor,
   listDiningTables, saveDiningTable, saveTablesBatch, deleteDiningTable
 } from '@renderer/features/tables/table-service'
 import { ConfirmDeleteButton } from '@renderer/components/ConfirmDeleteButton'
 import {
-  MdAdd, MdSave, MdDelete, MdEdit, MdCheck, MdClose,
+  MdAdd, MdSave, MdEdit, MdCheck,
   MdTableRestaurant, MdGridOn, MdGridOff, MdZoomIn, MdZoomOut,
-  MdRotateRight, MdAddCircle
+  MdRotateRight, MdAddCircle, MdDraw, MdDelete
 } from 'react-icons/md'
 
-// ── Constants ─────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────
 
-const GRID = 20           // snap grid in logical px
-const MIN_ZOOM = 0.4
-const MAX_ZOOM = 2.0
-const DEFAULT_W = 80
-const DEFAULT_H = 80
+const GRID        = 20
+const CHAIR_R     = 11    // chair radius in px
+const CHAIR_GAP   = 5     // gap between chair edge and table edge
+const SNAP_ASSIGN = 40    // px: drop chair this close to a table to assign it
+const MIN_ZOOM    = 0.4
+const MAX_ZOOM    = 2.0
+const DEFAULT_W   = 80
+const DEFAULT_H   = 80
+const WALL_COLOR  = '#555'
+const WALL_W      = 6
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-function snap(v: number): number {
-  return Math.round(v / GRID) * GRID
+function snap(v: number): number { return Math.round(v / GRID) * GRID }
+function uid(): string { return crypto.randomUUID() }
+
+function defaultChairPositions(
+  tableX: number, tableY: number,
+  tableW: number, tableH: number,
+  count: number, shape: TableShape
+): Array<{ id: string; x: number; y: number }> {
+  const result: Array<{ id: string; x: number; y: number }> = []
+  if (count <= 0) return result
+
+  if (shape === 'circle') {
+    const cx = tableX + tableW / 2
+    const cy = tableY + tableH / 2
+    const r  = tableW / 2 + CHAIR_R + CHAIR_GAP
+    for (let i = 0; i < count; i++) {
+      const angle = (2 * Math.PI * i) / count - Math.PI / 2
+      result.push({ id: uid(), x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) })
+    }
+  } else {
+    // distribute around rect sides
+    const sides = [
+      { dir: 'top',    n: Math.ceil(count / 4) },
+      { dir: 'bottom', n: Math.ceil(count / 4) },
+      { dir: 'left',   n: Math.floor(count / 4) },
+      { dir: 'right',  n: Math.floor(count / 4) },
+    ]
+    // adjust so total === count
+    let total = sides.reduce((s, d) => s + d.n, 0)
+    let si = 0
+    while (total > count) { sides[si % 4]!.n--; total--; si++ }
+    while (total < count) { sides[si % 4]!.n++; total++; si++ }
+
+    for (const side of sides) {
+      for (let i = 0; i < side.n; i++) {
+        const t = side.n === 1 ? 0.5 : i / (side.n - 1)
+        let cx = 0, cy = 0
+        const inset = 12
+        if (side.dir === 'top') {
+          cx = tableX + inset + t * (tableW - inset * 2)
+          cy = tableY - CHAIR_R - CHAIR_GAP
+        } else if (side.dir === 'bottom') {
+          cx = tableX + inset + t * (tableW - inset * 2)
+          cy = tableY + tableH + CHAIR_R + CHAIR_GAP
+        } else if (side.dir === 'left') {
+          cx = tableX - CHAIR_R - CHAIR_GAP
+          cy = tableY + inset + t * (tableH - inset * 2)
+        } else {
+          cx = tableX + tableW + CHAIR_R + CHAIR_GAP
+          cy = tableY + inset + t * (tableH - inset * 2)
+        }
+        result.push({ id: uid(), x: cx, y: cy })
+      }
+    }
+  }
+  return result
 }
 
-const SHAPE_LABELS: Record<TableShape, string> = {
-  rect: 'مستطيل',
-  circle: 'دائري',
-  round_rect: 'مدوّر'
+/** Return how many chairs already assigned to a table */
+function chairsForTable(tableId: string, freeChairs: FreeChair[]): FreeChair[] {
+  return freeChairs.filter((c) => c.tableId === tableId)
 }
 
-// ── TableNode — a single draggable table on the canvas ────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────
 
-interface TableNodeProps {
-  table: DiningTable
+/** A chair that lives on the canvas independently */
+interface FreeChair {
+  id: string
+  tableId: string   // which table this chair "belongs" to (shown in same color)
+  x: number         // canvas position (centre)
+  y: number
+}
+
+type ToolMode = 'select' | 'draw_wall'
+
+// ── WallLayer SVG ──────────────────────────────────────────────────────────
+
+function WallLayer({
+  walls,
+  width,
+  height,
+  selectedWallId,
+  onSelectWall,
+  drawingWall,
+}: {
+  walls: WallSegment[]
+  width: number
+  height: number
+  selectedWallId: string | null
+  onSelectWall: (id: string | null) => void
+  drawingWall: WallSegment | null
+}): React.ReactElement {
+  return (
+    <svg
+      style={{
+        position: 'absolute', inset: 0, width, height,
+        pointerEvents: 'none', zIndex: 0, overflow: 'visible'
+      }}
+    >
+      {walls.map((w) => (
+        <line
+          key={w.id}
+          x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
+          stroke={selectedWallId === w.id ? 'var(--color-primary)' : (w.color ?? WALL_COLOR)}
+          strokeWidth={(w.thickness ?? WALL_W) + (selectedWallId === w.id ? 4 : 0)}
+          strokeLinecap="round"
+          style={{ pointerEvents: 'visibleStroke', cursor: 'pointer' }}
+          onClick={(e) => { e.stopPropagation(); onSelectWall(selectedWallId === w.id ? null : w.id) }}
+        />
+      ))}
+      {drawingWall && (
+        <line
+          x1={drawingWall.x1} y1={drawingWall.y1}
+          x2={drawingWall.x2} y2={drawingWall.y2}
+          stroke={WALL_COLOR} strokeWidth={WALL_W}
+          strokeLinecap="round" strokeDasharray="8 4"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+    </svg>
+  )
+}
+
+// ── ChairNode ──────────────────────────────────────────────────────────────
+
+interface ChairNodeProps {
+  chair: FreeChair
+  color: string
   isSelected: boolean
-  isOccupied?: boolean
-  showSeats: boolean
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>, id: string) => void
   onClick: (id: string) => void
 }
 
-function seatPositions(w: number, h: number, seats: number, shape: TableShape): Array<{ x: number; y: number }> {
-  // Distribute seats evenly around the perimeter
-  const positions: Array<{ x: number; y: number }> = []
-  const seatR = 10
-  const isCircle = shape === 'circle'
-  const r = isCircle ? w / 2 : undefined
-
-  if (isCircle && r) {
-    for (let i = 0; i < seats; i++) {
-      const angle = (2 * Math.PI * i) / seats - Math.PI / 2
-      const rx = r + seatR + 2
-      positions.push({ x: w / 2 + rx * Math.cos(angle), y: h / 2 + rx * Math.sin(angle) })
-    }
-  } else {
-    // Place seats on the four sides proportionally
-    const perSide = Math.max(1, Math.round(seats / 4))
-    const sides: Array<{ axis: 'x' | 'y'; fixed: number; from: number; to: number }> = [
-      { axis: 'x', fixed: -seatR * 2 - 2, from: 10, to: w - 10 },   // top
-      { axis: 'x', fixed: h + 2,           from: 10, to: w - 10 },   // bottom
-      { axis: 'y', fixed: -seatR * 2 - 2, from: 10, to: h - 10 },   // left
-      { axis: 'y', fixed: w + 2,           from: 10, to: h - 10 },   // right
-    ]
-    let placed = 0
-    for (const side of sides) {
-      const count = Math.min(perSide, seats - placed)
-      for (let i = 0; i < count; i++) {
-        const t = count === 1 ? 0.5 : i / (count - 1)
-        const along = side.from + t * (side.to - side.from)
-        if (side.axis === 'x') positions.push({ x: along, y: side.fixed })
-        else                   positions.push({ x: side.fixed, y: along })
-        placed++
-      }
-      if (placed >= seats) break
-    }
-  }
-  return positions
+function ChairNode({ chair, color, isSelected, onPointerDown, onClick }: ChairNodeProps): React.ReactElement {
+  return (
+    <div
+      className={`fp-chair${isSelected ? ' fp-chair--selected' : ''}`}
+      style={{
+        position: 'absolute',
+        left:  chair.x - CHAIR_R,
+        top:   chair.y - CHAIR_R,
+        width: CHAIR_R * 2,
+        height: CHAIR_R * 2,
+        borderRadius: '50%',
+        background: color,
+        border: isSelected ? '2.5px solid #fff' : '2px solid rgba(0,0,0,0.25)',
+        cursor: 'grab',
+        zIndex: 20,
+        touchAction: 'none',
+        boxSizing: 'border-box',
+        boxShadow: isSelected ? `0 0 0 2px var(--color-primary)` : '1px 1px 3px rgba(0,0,0,0.2)',
+      }}
+      onPointerDown={(e) => onPointerDown(e, chair.id)}
+      onClick={(e) => { e.stopPropagation(); onClick(chair.id) }}
+    />
+  )
 }
 
-function TableNode({ table, isSelected, showSeats, onPointerDown, onClick }: TableNodeProps): React.ReactElement {
+// ── TableNode ──────────────────────────────────────────────────────────────
+
+interface TableNodeProps {
+  table: DiningTable
+  isSelected: boolean
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>, id: string) => void
+  onClick: (id: string) => void
+}
+
+function TableNode({ table, isSelected, onPointerDown, onClick }: TableNodeProps): React.ReactElement {
   const x = table.x ?? 0
   const y = table.y ?? 0
   const w = table.w ?? DEFAULT_W
   const h = table.h ?? DEFAULT_H
   const shape = table.shape ?? 'rect'
-  const seats = table.seats ?? 4
   const rotation = table.rotation ?? 0
-  const seatPts = showSeats ? seatPositions(w, h, seats, shape) : []
-  const seatR = 9
-
-  const borderRadius =
-    shape === 'circle'     ? '50%' :
-    shape === 'round_rect' ? '16px' :
-    '4px'
-
-  const padding = showSeats ? seatR * 2 + 6 : 0
+  const borderRadius = shape === 'circle' ? '50%' : '6px'
 
   return (
     <div
       className={`fp-table${isSelected ? ' fp-table--selected' : ''}`}
       style={{
         position: 'absolute',
-        left: x - padding,
-        top:  y - padding,
-        width:  w + padding * 2,
-        height: h + padding * 2,
+        left: x,
+        top:  y,
+        width: w,
+        height: h,
         cursor: 'grab',
         userSelect: 'none',
         touchAction: 'none',
-        zIndex: isSelected ? 10 : 1,
+        zIndex: isSelected ? 10 : 2,
+        borderRadius,
+        transform: `rotate(${rotation}deg)`,
+        transformOrigin: 'center center',
       }}
       onPointerDown={(e) => onPointerDown(e, table.id)}
-      onClick={() => onClick(table.id)}
+      onClick={(e) => { e.stopPropagation(); onClick(table.id) }}
     >
-      {/* Seats */}
-      {seatPts.map((pt, i) => (
-        <div
-          key={i}
-          className="fp-seat"
-          style={{
-            position: 'absolute',
-            left: pt.x + padding - seatR,
-            top:  pt.y + padding - seatR,
-            width:  seatR * 2,
-            height: seatR * 2,
-            borderRadius: '50%',
-            pointerEvents: 'none'
-          }}
-        />
-      ))}
-      {/* Table body */}
-      <div
-        className="fp-table__body"
-        style={{
-          position: 'absolute',
-          left: padding,
-          top:  padding,
-          width: w,
-          height: h,
-          borderRadius,
-          transform: `rotate(${rotation}deg)`,
-          pointerEvents: 'none'
-        }}
-      >
-        <span className="fp-table__label">{table.nameAr}</span>
-      </div>
+      <span className="fp-table__label">{table.nameAr}</span>
     </div>
   )
 }
 
-// ── AddTableModal ─────────────────────────────────────────────────────────
+// ── AddTableModal ──────────────────────────────────────────────────────────
 
 interface AddTableModalProps {
   floorId: string
-  onSave: (t: DiningTable) => void
-  onClose: () => void
   dropX?: number
   dropY?: number
+  onSave: (t: DiningTable, chairs: FreeChair[]) => void
+  onClose: () => void
 }
 
-function AddTableModal({ floorId, onSave, onClose, dropX, dropY }: AddTableModalProps): React.ReactElement {
+function AddTableModal({ floorId, dropX, dropY, onSave, onClose }: AddTableModalProps): React.ReactElement {
   const [nameAr, setNameAr] = useState('')
-  const [shape, setShape] = useState<TableShape>('rect')
-  const [seats, setSeats] = useState(4)
-  const [w, setW] = useState(DEFAULT_W)
-  const [h, setH] = useState(DEFAULT_H)
+  const [shape, setShape]   = useState<TableShape>('rect')
+  const [seats, setSeats]   = useState(4)
+  const [w, setW]           = useState(DEFAULT_W)
+  const [h, setH]           = useState(DEFAULT_H)
   const [saving, setSaving] = useState(false)
 
   async function handleSave(): Promise<void> {
     if (!nameAr.trim()) return
     setSaving(true)
-    const t = await saveDiningTable({
-      nameAr: nameAr.trim(),
-      floorId,
-      x: snap(dropX ?? 100),
-      y: snap(dropY ?? 100),
-      w, h, shape, seats,
-      active: true,
-      sortOrder: Date.now()
+    const tx = snap(dropX ?? 120)
+    const ty = snap(dropY ?? 120)
+    const t  = await saveDiningTable({
+      nameAr: nameAr.trim(), floorId,
+      x: tx, y: ty, w, h, shape,
+      seats, active: true, sortOrder: Date.now()
     })
-    onSave(t)
+    const chairs = defaultChairPositions(tx, ty, w, h, seats, shape).map((c) => ({
+      ...c, tableId: t.id
+    }))
+    onSave(t, chairs)
     setSaving(false)
   }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
         <div className="order-details__header">
           <h2 className="order-details__title">إضافة ترابيزة</h2>
           <button type="button" className="order-details__close" onClick={onClose}>✕</button>
@@ -205,32 +290,43 @@ function AddTableModal({ floorId, onSave, onClose, dropX, dropY }: AddTableModal
           <label className="field settings-form-grid__full">
             <span>اسم الترابيزة</span>
             <input autoFocus value={nameAr} onChange={(e) => setNameAr(e.target.value)}
-              placeholder="مثال: 1 أو VIP"
+              placeholder="1 أو VIP أو…"
               onKeyDown={(e) => { if (e.key === 'Enter') void handleSave() }} />
           </label>
           <label className="field">
             <span>الشكل</span>
-            <select value={shape} onChange={(e) => setShape(e.target.value as TableShape)}>
-              {(Object.entries(SHAPE_LABELS) as [TableShape, string][]).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button"
+                className={`btn btn--sm ${shape === 'rect' ? 'btn--primary' : 'btn--secondary'}`}
+                onClick={() => setShape('rect')}>
+                ▭ مربع
+              </button>
+              <button type="button"
+                className={`btn btn--sm ${shape === 'circle' ? 'btn--primary' : 'btn--secondary'}`}
+                onClick={() => setShape('circle')}>
+                ● دائري
+              </button>
+            </div>
           </label>
           <label className="field">
             <span>عدد الكراسي</span>
-            <input type="number" min={0} max={20} value={seats} onChange={(e) => setSeats(Number(e.target.value))} />
+            <input type="number" min={0} max={20} value={seats}
+              onChange={(e) => setSeats(Number(e.target.value))} />
           </label>
           <label className="field">
-            <span>العرض (px)</span>
-            <input type="number" min={40} max={300} step={20} value={w} onChange={(e) => setW(Number(e.target.value))} />
+            <span>العرض</span>
+            <input type="number" min={40} max={300} step={20} value={w}
+              onChange={(e) => setW(Number(e.target.value))} />
           </label>
           <label className="field">
-            <span>الارتفاع (px)</span>
-            <input type="number" min={40} max={300} step={20} value={h} onChange={(e) => setH(Number(e.target.value))} />
+            <span>الارتفاع</span>
+            <input type="number" min={40} max={300} step={20} value={h}
+              onChange={(e) => setH(Number(e.target.value))} />
           </label>
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn--primary" disabled={saving || !nameAr.trim()} onClick={() => void handleSave()}>
+          <button type="button" className="btn btn--primary"
+            disabled={saving || !nameAr.trim()} onClick={() => void handleSave()}>
             <MdAdd /> إضافة
           </button>
           <button type="button" className="btn btn--secondary" onClick={onClose}>إلغاء</button>
@@ -240,7 +336,7 @@ function AddTableModal({ floorId, onSave, onClose, dropX, dropY }: AddTableModal
   )
 }
 
-// ── EditTableModal ────────────────────────────────────────────────────────
+// ── EditTableModal ─────────────────────────────────────────────────────────
 
 interface EditTableModalProps {
   table: DiningTable
@@ -249,25 +345,23 @@ interface EditTableModalProps {
 }
 
 function EditTableModal({ table, onSave, onClose }: EditTableModalProps): React.ReactElement {
-  const [nameAr, setNameAr] = useState(table.nameAr)
-  const [shape, setShape] = useState<TableShape>(table.shape ?? 'rect')
-  const [seats, setSeats] = useState(table.seats ?? 4)
-  const [w, setW] = useState(table.w ?? DEFAULT_W)
-  const [h, setH] = useState(table.h ?? DEFAULT_H)
-  const [rotation, setRotation] = useState(table.rotation ?? 0)
-  const [saving, setSaving] = useState(false)
+  const [nameAr, setNameAr]   = useState(table.nameAr)
+  const [w, setW]             = useState(table.w ?? DEFAULT_W)
+  const [h, setH]             = useState(table.h ?? DEFAULT_H)
+  const [rotation, setRot]    = useState(table.rotation ?? 0)
+  const [saving, setSaving]   = useState(false)
 
   async function handleSave(): Promise<void> {
     if (!nameAr.trim()) return
     setSaving(true)
-    const updated = await saveDiningTable({ ...table, nameAr, shape, seats, w, h, rotation })
+    const updated = await saveDiningTable({ ...table, nameAr, w, h, rotation })
     onSave(updated)
     setSaving(false)
   }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
         <div className="order-details__header">
           <h2 className="order-details__title">تعديل الترابيزة</h2>
           <button type="button" className="order-details__close" onClick={onClose}>✕</button>
@@ -278,41 +372,30 @@ function EditTableModal({ table, onSave, onClose }: EditTableModalProps): React.
             <input autoFocus value={nameAr} onChange={(e) => setNameAr(e.target.value)} />
           </label>
           <label className="field">
-            <span>الشكل</span>
-            <select value={shape} onChange={(e) => setShape(e.target.value as TableShape)}>
-              {(Object.entries(SHAPE_LABELS) as [TableShape, string][]).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <span>العرض</span>
+            <input type="number" min={40} max={300} step={20} value={w}
+              onChange={(e) => setW(Number(e.target.value))} />
           </label>
           <label className="field">
-            <span>الكراسي</span>
-            <input type="number" min={0} max={20} value={seats} onChange={(e) => setSeats(Number(e.target.value))} />
-          </label>
-          <label className="field">
-            <span>العرض (px)</span>
-            <input type="number" min={40} max={300} step={20} value={w} onChange={(e) => setW(Number(e.target.value))} />
-          </label>
-          <label className="field">
-            <span>الارتفاع (px)</span>
-            <input type="number" min={40} max={300} step={20} value={h} onChange={(e) => setH(Number(e.target.value))} />
+            <span>الارتفاع</span>
+            <input type="number" min={40} max={300} step={20} value={h}
+              onChange={(e) => setH(Number(e.target.value))} />
           </label>
           <label className="field settings-form-grid__full">
-            <span>الدوران: {rotation}°</span>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <span>الدوران</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[0, 45, 90, 135, 180, 270].map((deg) => (
-                <button
-                  key={deg} type="button"
+                <button key={deg} type="button"
                   className={`btn btn--sm ${rotation === deg ? 'btn--primary' : 'btn--secondary'}`}
-                  style={{ minHeight: 30, padding: '0 8px', fontSize: '0.78rem' }}
-                  onClick={() => setRotation(deg)}
-                >{deg}°</button>
+                  style={{ minHeight: 30, padding: '0 8px' }}
+                  onClick={() => setRot(deg)}>{deg}°</button>
               ))}
             </div>
           </label>
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn--primary" disabled={saving || !nameAr.trim()} onClick={() => void handleSave()}>
+          <button type="button" className="btn btn--primary"
+            disabled={saving || !nameAr.trim()} onClick={() => void handleSave()}>
             <MdCheck /> حفظ
           </button>
           <button type="button" className="btn btn--secondary" onClick={onClose}>إلغاء</button>
@@ -322,41 +405,64 @@ function EditTableModal({ table, onSave, onClose }: EditTableModalProps): React.
   )
 }
 
-// ── FloorPlanPage ─────────────────────────────────────────────────────────
+// ── Colour palette for tables ──────────────────────────────────────────────
+
+const TABLE_COLORS = [
+  '#1a7a4a', '#0e7490', '#7c3aed', '#b8430a',
+  '#1d4ed8', '#be185d', '#374151', '#b91c1c'
+]
+
+function tableColor(tableId: string, tables: DiningTable[]): string {
+  const idx = tables.findIndex((t) => t.id === tableId)
+  return TABLE_COLORS[idx % TABLE_COLORS.length] ?? TABLE_COLORS[0]!
+}
+
+// ── FloorPlanPage ──────────────────────────────────────────────────────────
 
 export function FloorPlanPage(): React.ReactElement {
-  const [floors, setFloors] = useState<Floor[]>([])
+  const [floors, setFloors]         = useState<Floor[]>([])
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null)
-  const [tables, setTables] = useState<DiningTable[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [showGrid, setShowGrid] = useState(true)
-  const [showSeats, setShowSeats] = useState(true)
-  const [zoom, setZoom] = useState(1)
+  const [tables, setTables]         = useState<DiningTable[]>([])
+  const [chairs, setChairs]         = useState<FreeChair[]>([])
+  const [walls, setWalls]           = useState<WallSegment[]>([])
+
+  // selection
+  const [selectedTableId, setSelectedTableId]   = useState<string | null>(null)
+  const [selectedChairId, setSelectedChairId]   = useState<string | null>(null)
+  const [selectedWallId, setSelectedWallId]     = useState<string | null>(null)
+
+  // UI
+  const [tool, setTool]             = useState<ToolMode>('select')
+  const [showGrid, setShowGrid]     = useState(true)
+  const [zoom, setZoom]             = useState(1)
+  const [msg, setMsg]               = useState<string | null>(null)
+  const [savingAll, setSavingAll]   = useState(false)
   const [showAddTable, setShowAddTable] = useState(false)
-  const [dropPos, setDropPos] = useState<{ x: number; y: number } | null>(null)
+  const [dropPos, setDropPos]       = useState<{ x: number; y: number } | null>(null)
   const [editingTable, setEditingTable] = useState<DiningTable | null>(null)
-  const [msg, setMsg] = useState<string | null>(null)
-  const [savingAll, setSavingAll] = useState(false)
 
-  // Floor form
+  // floor form
   const [floorFormOpen, setFloorFormOpen] = useState(false)
-  const [floorName, setFloorName] = useState('')
-  const [editingFloor, setEditingFloor] = useState<Floor | null>(null)
+  const [floorName, setFloorName]         = useState('')
+  const [editingFloor, setEditingFloor]   = useState<Floor | null>(null)
 
-  // ── Drag state — all in refs, never in React state ─────────────────────
-  const draggingId  = useRef<string | null>(null)
+  // ── Drag refs — no state, zero re-renders during drag ──────────────────
+  type DragKind = 'table' | 'chair'
+  const dragging    = useRef<{ kind: DragKind; id: string } | null>(null)
   const dragOffset  = useRef({ x: 0, y: 0 })
   const dragNodeRef = useRef<HTMLDivElement | null>(null)
   const canvasRef   = useRef<HTMLDivElement>(null)
+
+  // ── Wall drawing refs ──────────────────────────────────────────────────
+  const [drawingWall, setDrawingWall] = useState<WallSegment | null>(null)
+  const wallStartRef  = useRef<{ x: number; y: number } | null>(null)
+  const drawingWallRef = useRef<WallSegment | null>(null)
 
   // ── Load ───────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     const fl = await listFloors(true)
     setFloors(fl)
-    if (fl.length > 0) {
-      const first = fl[0]!
-      setActiveFloorId((prev) => prev ?? first.id)
-    }
+    if (fl.length > 0) setActiveFloorId((p) => p ?? fl[0]!.id)
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -364,9 +470,37 @@ export function FloorPlanPage(): React.ReactElement {
   useEffect(() => {
     if (!activeFloorId) return
     void listDiningTables(true).then((all) => {
-      setTables(all.filter((t) => t.floorId === activeFloorId))
+      const floorTables = all.filter((t) => t.floorId === activeFloorId)
+      setTables(floorTables)
+      // Hydrate chairs from stored chairPositions
+      const allChairs: FreeChair[] = []
+      for (const t of floorTables) {
+        if (t.chairPositions && t.chairPositions.length > 0) {
+          for (const cp of t.chairPositions) {
+            allChairs.push({ id: cp.id, tableId: t.id, x: cp.x, y: cp.y })
+          }
+        } else if ((t.seats ?? 0) > 0) {
+          // Legacy: generate default positions
+          const positions = defaultChairPositions(
+            t.x ?? 0, t.y ?? 0, t.w ?? DEFAULT_W, t.h ?? DEFAULT_H,
+            t.seats ?? 4, t.shape ?? 'rect'
+          )
+          for (const p of positions) allChairs.push({ id: p.id, tableId: t.id, x: p.x, y: p.y })
+        }
+      }
+      setChairs(allChairs)
     })
+    // Load walls from floor
+    const fl = floors.find((f) => f.id === activeFloorId)
+    setWalls(fl?.walls ?? [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFloorId])
+
+  // Sync walls when floors update
+  useEffect(() => {
+    const fl = floors.find((f) => f.id === activeFloorId)
+    if (fl) setWalls(fl.walls ?? [])
+  }, [floors, activeFloorId])
 
   const activeFloor = floors.find((f) => f.id === activeFloorId) ?? null
 
@@ -377,120 +511,291 @@ export function FloorPlanPage(): React.ReactElement {
     return () => clearTimeout(t)
   }, [msg])
 
-  // ── Drag handlers ──────────────────────────────────────────────────────
+  // ── Canvas coord helper ────────────────────────────────────────────────
+  function canvasCoord(clientX: number, clientY: number): { x: number; y: number } {
+    const r = canvasRef.current!.getBoundingClientRect()
+    return { x: (clientX - r.left) / zoom, y: (clientY - r.top) / zoom }
+  }
 
+  // ── Table drag ─────────────────────────────────────────────────────────
   function handleTablePointerDown(e: ReactPointerEvent<HTMLDivElement>, id: string): void {
-    if (e.button !== 0) return
+    if (tool !== 'select' || e.button !== 0) return
     e.preventDefault()
+    e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
 
     const table = tables.find((t) => t.id === id)
     if (!table) return
 
-    const canvasRect = canvasRef.current?.getBoundingClientRect()
-    if (!canvasRect) return
-
-    // Offset from top-left of the table body relative to canvas (accounting for zoom)
-    const tableX = (table.x ?? 0)
-    const tableY = (table.y ?? 0)
-    const seats = showSeats ? (table.seats ?? 4) : 0
-    const pad = seats > 0 ? 9 * 2 + 6 : 0
-
-    // Click position in canvas logical coords
-    const cx = (e.clientX - canvasRect.left) / zoom
-    const cy = (e.clientY - canvasRect.top)  / zoom
-
-    dragOffset.current = {
-      x: cx - (tableX - pad),
-      y: cy - (tableY - pad)
-    }
-    draggingId.current = id
-    setSelectedId(id)
-
-    // Find the DOM node we're dragging so we can move it directly
+    const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
+    dragOffset.current = { x: cx - (table.x ?? 0), y: cy - (table.y ?? 0) }
+    dragging.current   = { kind: 'table', id }
     dragNodeRef.current = e.currentTarget
     dragNodeRef.current.style.zIndex = '100'
     dragNodeRef.current.style.cursor = 'grabbing'
+
+    setSelectedTableId(id)
+    setSelectedChairId(null)
+    setSelectedWallId(null)
   }
 
+  // ── Chair drag ─────────────────────────────────────────────────────────
+  function handleChairPointerDown(e: ReactPointerEvent<HTMLDivElement>, id: string): void {
+    if (tool !== 'select' || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+
+    const chair = chairs.find((c) => c.id === id)
+    if (!chair) return
+
+    const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
+    dragOffset.current = { x: cx - chair.x, y: cy - chair.y }
+    dragging.current   = { kind: 'chair', id }
+    dragNodeRef.current = e.currentTarget
+    dragNodeRef.current.style.zIndex = '200'
+    dragNodeRef.current.style.cursor = 'grabbing'
+
+    setSelectedChairId(id)
+    setSelectedTableId(null)
+    setSelectedWallId(null)
+  }
+
+  // ── Canvas pointer move ────────────────────────────────────────────────
   function handleCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>): void {
-    if (!draggingId.current || !dragNodeRef.current || !canvasRef.current) return
+    const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
+
+    // Wall drawing
+    if (tool === 'draw_wall' && wallStartRef.current) {
+      const nx = snap(cx), ny = snap(cy)
+      const next: WallSegment = {
+        id: drawingWallRef.current?.id ?? uid(),
+        x1: wallStartRef.current.x, y1: wallStartRef.current.y,
+        x2: nx, y2: ny,
+        thickness: WALL_W, color: WALL_COLOR
+      }
+      drawingWallRef.current = next
+      setDrawingWall(next)
+      return
+    }
+
+    if (!dragging.current || !dragNodeRef.current) return
     e.preventDefault()
 
-    const canvasRect = canvasRef.current.getBoundingClientRect()
-    const cx = (e.clientX - canvasRect.left) / zoom
-    const cy = (e.clientY - canvasRect.top)  / zoom
-
-    const table = tables.find((t) => t.id === draggingId.current)
-    if (!table) return
-
-    const seats = showSeats ? (table.seats ?? 4) : 0
-    const pad = seats > 0 ? 9 * 2 + 6 : 0
-
-    const rawLeft = cx - dragOffset.current.x
-    const rawTop  = cy - dragOffset.current.y
-
-    // Clamp to canvas bounds
-    const maxX = (activeFloor?.width  ?? 1200) - (table.w ?? DEFAULT_W) - pad
-    const maxY = (activeFloor?.height ?? 800)  - (table.h ?? DEFAULT_H) - pad
-    const snappedLeft = Math.max(-pad, Math.min(snap(rawLeft), maxX))
-    const snappedTop  = Math.max(-pad, Math.min(snap(rawTop),  maxY))
-
-    // Directly mutate the DOM — no React state update during drag
-    dragNodeRef.current.style.left = `${snappedLeft}px`
-    dragNodeRef.current.style.top  = `${snappedTop}px`
+    if (dragging.current.kind === 'table') {
+      const table = tables.find((t) => t.id === dragging.current!.id)
+      if (!table) return
+      const maxX = (activeFloor?.width  ?? 1200) - (table.w ?? DEFAULT_W)
+      const maxY = (activeFloor?.height ?? 800)  - (table.h ?? DEFAULT_H)
+      const nx = Math.max(0, Math.min(snap(cx - dragOffset.current.x), maxX))
+      const ny = Math.max(0, Math.min(snap(cy - dragOffset.current.y), maxY))
+      dragNodeRef.current.style.left = `${nx}px`
+      dragNodeRef.current.style.top  = `${ny}px`
+    } else {
+      // chair
+      const nx = snap(cx - dragOffset.current.x)
+      const ny = snap(cy - dragOffset.current.y)
+      dragNodeRef.current.style.left = `${nx - CHAIR_R}px`
+      dragNodeRef.current.style.top  = `${ny - CHAIR_R}px`
+    }
   }
 
+  // ── Canvas pointer up ──────────────────────────────────────────────────
   function handleCanvasPointerUp(e: React.PointerEvent<HTMLDivElement>): void {
-    if (!draggingId.current || !dragNodeRef.current || !canvasRef.current) return
+    const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
 
-    const canvasRect = canvasRef.current.getBoundingClientRect()
-    const cx = (e.clientX - canvasRect.left) / zoom
-    const cy = (e.clientY - canvasRect.top)  / zoom
+    // Finish wall drawing
+    if (tool === 'draw_wall' && wallStartRef.current) {
+      const nx = snap(cx), ny = snap(cy)
+      const dx = nx - wallStartRef.current.x
+      const dy = ny - wallStartRef.current.y
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        const newWall: WallSegment = {
+          id: drawingWallRef.current?.id ?? uid(),
+          x1: wallStartRef.current.x, y1: wallStartRef.current.y,
+          x2: nx, y2: ny,
+          thickness: WALL_W, color: WALL_COLOR
+        }
+        const nextWalls = [...walls, newWall]
+        setWalls(nextWalls)
+        // Persist walls into floor
+        if (activeFloor) void saveFloor({ ...activeFloor, walls: nextWalls })
+      }
+      wallStartRef.current = null
+      drawingWallRef.current = null
+      setDrawingWall(null)
+      return
+    }
 
-    const table = tables.find((t) => t.id === draggingId.current)
-    if (table) {
-      const seats = showSeats ? (table.seats ?? 4) : 0
-      const pad = seats > 0 ? 9 * 2 + 6 : 0
+    if (!dragging.current || !dragNodeRef.current) return
 
-      const rawLeft = cx - dragOffset.current.x
-      const rawTop  = cy - dragOffset.current.y
-      const maxX = (activeFloor?.width  ?? 1200) - (table.w ?? DEFAULT_W) - pad
-      const maxY = (activeFloor?.height ?? 800)  - (table.h ?? DEFAULT_H) - pad
-      const newX = Math.max(0, Math.min(snap(rawLeft + pad), maxX + pad))
-      const newY = Math.max(0, Math.min(snap(rawTop  + pad), maxY + pad))
+    if (dragging.current.kind === 'table') {
+      const id    = dragging.current.id
+      const table = tables.find((t) => t.id === id)
+      if (table) {
+        const maxX = (activeFloor?.width  ?? 1200) - (table.w ?? DEFAULT_W)
+        const maxY = (activeFloor?.height ?? 800)  - (table.h ?? DEFAULT_H)
+        const newX = Math.max(0, Math.min(snap(cx - dragOffset.current.x), maxX))
+        const newY = Math.max(0, Math.min(snap(cy - dragOffset.current.y), maxY))
+        const dx = newX - (table.x ?? 0)
+        const dy = newY - (table.y ?? 0)
+        // Move table AND all its chairs by the same delta
+        setTables((prev) => prev.map((t) => t.id === id ? { ...t, x: newX, y: newY } : t))
+        setChairs((prev) => prev.map((c) =>
+          c.tableId === id ? { ...c, x: c.x + dx, y: c.y + dy } : c
+        ))
+      }
+    } else {
+      // Chair — check if it should be reassigned to a closer table
+      const chairId = dragging.current.id
+      const newX = snap(cx - dragOffset.current.x)
+      const newY = snap(cy - dragOffset.current.y)
+      const chair = chairs.find((c) => c.id === chairId)
+      if (chair) {
+        // Find closest table centre
+        let closest: DiningTable | null = null
+        let closestDist = Infinity
+        for (const t of tables) {
+          const tcx = (t.x ?? 0) + (t.w ?? DEFAULT_W) / 2
+          const tcy = (t.y ?? 0) + (t.h ?? DEFAULT_H) / 2
+          const dist = Math.hypot(newX - tcx, newY - tcy)
+          if (dist < closestDist) { closestDist = dist; closest = t }
+        }
+        const newTableId = (closest && closestDist < SNAP_ASSIGN + (closest.w ?? DEFAULT_W) / 2)
+          ? closest.id
+          : chair.tableId
 
-      // NOW update React state (only once, on release)
-      setTables((prev) =>
-        prev.map((t) => t.id === table.id ? { ...t, x: newX, y: newY } : t)
-      )
+        setChairs((prev) => prev.map((c) =>
+          c.id === chairId ? { ...c, x: newX, y: newY, tableId: newTableId } : c
+        ))
+      }
     }
 
     dragNodeRef.current.style.zIndex = ''
     dragNodeRef.current.style.cursor = 'grab'
-    draggingId.current = null
+    dragging.current = null
     dragNodeRef.current = null
+  }
+
+  // ── Canvas pointer down (for wall drawing) ─────────────────────────────
+  function handleCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>): void {
+    if (tool !== 'draw_wall') return
+    if ((e.target as HTMLElement).closest('.fp-table, .fp-chair')) return
+    e.preventDefault()
+    const { x, y } = canvasCoord(e.clientX, e.clientY)
+    wallStartRef.current = { x: snap(x), y: snap(y) }
   }
 
   // ── Canvas double-click to add table ───────────────────────────────────
   function handleCanvasDblClick(e: React.MouseEvent<HTMLDivElement>): void {
-    if (!activeFloorId) return
-    if ((e.target as HTMLElement).closest('.fp-table')) return // clicked on a table
-
-    const canvasRect = canvasRef.current?.getBoundingClientRect()
-    if (!canvasRect) return
-    const x = snap((e.clientX - canvasRect.left) / zoom)
-    const y = snap((e.clientY - canvasRect.top)  / zoom)
-    setDropPos({ x, y })
+    if (tool !== 'select' || !activeFloorId) return
+    if ((e.target as HTMLElement).closest('.fp-table, .fp-chair')) return
+    const { x, y } = canvasCoord(e.clientX, e.clientY)
+    setDropPos({ x: snap(x), y: snap(y) })
     setShowAddTable(true)
   }
 
-  // ── Save all positions ─────────────────────────────────────────────────
+  // ── Canvas click — deselect ────────────────────────────────────────────
+  function handleCanvasClick(e: React.MouseEvent<HTMLDivElement>): void {
+    if ((e.target as HTMLElement) === canvasRef.current) {
+      setSelectedTableId(null)
+      setSelectedChairId(null)
+      setSelectedWallId(null)
+    }
+  }
+
+  // ── Shape toggle ───────────────────────────────────────────────────────
+  async function toggleShape(shape: TableShape): Promise<void> {
+    if (!selectedTableId) return
+    const table = tables.find((t) => t.id === selectedTableId)
+    if (!table) return
+    const updated = await saveDiningTable({ ...table, shape })
+    setTables((prev) => prev.map((t) => t.id === selectedTableId ? updated : t))
+    // Re-layout chairs for new shape
+    const count = chairsForTable(selectedTableId, chairs).length
+    if (count > 0) {
+      const newPositions = defaultChairPositions(
+        updated.x ?? 0, updated.y ?? 0, updated.w ?? DEFAULT_W, updated.h ?? DEFAULT_H,
+        count, shape
+      )
+      setChairs((prev) => {
+        const others = prev.filter((c) => c.tableId !== selectedTableId)
+        const updated2 = newPositions.map((p, i) => {
+          const existing = prev.filter((c) => c.tableId === selectedTableId)[i]
+          return { id: existing?.id ?? uid(), tableId: selectedTableId, x: p.x, y: p.y }
+        })
+        return [...others, ...updated2]
+      })
+    }
+  }
+
+  // ── Rotate selected table ──────────────────────────────────────────────
+  async function handleRotate(): Promise<void> {
+    if (!selectedTableId) return
+    const table = tables.find((t) => t.id === selectedTableId)
+    if (!table) return
+    const newRot = ((table.rotation ?? 0) + 90) % 360
+    const updated = await saveDiningTable({ ...table, rotation: newRot })
+    setTables((prev) => prev.map((t) => t.id === selectedTableId ? updated : t))
+  }
+
+  // ── Add chair to selected table ────────────────────────────────────────
+  function handleAddChair(): void {
+    if (!selectedTableId) return
+    const table = tables.find((t) => t.id === selectedTableId)
+    if (!table) return
+    const current = chairsForTable(selectedTableId, chairs)
+    const count   = current.length + 1
+    const all = defaultChairPositions(
+      table.x ?? 0, table.y ?? 0, table.w ?? DEFAULT_W, table.h ?? DEFAULT_H,
+      count, table.shape ?? 'rect'
+    )
+    // Keep existing chair ids, add one new
+    const newChair: FreeChair = { id: uid(), tableId: selectedTableId, x: all[count - 1]!.x, y: all[count - 1]!.y }
+    setChairs((prev) => [...prev, newChair])
+  }
+
+  // ── Remove selected chair ──────────────────────────────────────────────
+  function handleRemoveChair(): void {
+    if (!selectedChairId) return
+    setChairs((prev) => prev.filter((c) => c.id !== selectedChairId))
+    setSelectedChairId(null)
+  }
+
+  // ── Delete wall ────────────────────────────────────────────────────────
+  async function handleDeleteWall(): Promise<void> {
+    if (!selectedWallId || !activeFloor) return
+    const nextWalls = walls.filter((w) => w.id !== selectedWallId)
+    setWalls(nextWalls)
+    setSelectedWallId(null)
+    await saveFloor({ ...activeFloor, walls: nextWalls })
+  }
+
+  // ── Delete table ───────────────────────────────────────────────────────
+  async function handleDeleteTable(): Promise<void> {
+    if (!selectedTableId) return
+    await deleteDiningTable(selectedTableId)
+    setTables((prev) => prev.filter((t) => t.id !== selectedTableId))
+    setChairs((prev) => prev.filter((c) => c.tableId !== selectedTableId))
+    setSelectedTableId(null)
+  }
+
+  // ── Save all ───────────────────────────────────────────────────────────
   async function handleSaveAll(): Promise<void> {
     setSavingAll(true)
     try {
-      await saveTablesBatch(tables)
-      setMsg('تم حفظ مواضع الترابيزات ✓')
+      // Persist chair positions back into each table's chairPositions field
+      const updated = tables.map((t) => {
+        const myChairs = chairs.filter((c) => c.tableId === t.id)
+        return {
+          ...t,
+          seats: myChairs.length,
+          chairPositions: myChairs.map((c) => ({ id: c.id, x: c.x, y: c.y }))
+        }
+      })
+      await saveTablesBatch(updated)
+      setTables(updated)
+      setMsg('تم الحفظ ✓')
     } catch { setMsg('فشل الحفظ') }
     finally { setSavingAll(false) }
   }
@@ -503,261 +808,307 @@ export function FloorPlanPage(): React.ReactElement {
         ? { ...editingFloor, nameAr: floorName }
         : { nameAr: floorName }
     )
-    setFloorFormOpen(false)
-    setFloorName('')
-    setEditingFloor(null)
+    setFloorFormOpen(false); setFloorName(''); setEditingFloor(null)
     await load()
     setActiveFloorId(floor.id)
-    setMsg(editingFloor ? 'تم تعديل المنطقة' : 'تمت إضافة المنطقة')
   }
 
   async function handleDeleteFloor(floorId: string): Promise<void> {
     await deleteFloor(floorId)
     await load()
-    setActiveFloorId((prev) => prev === floorId ? null : prev)
-    setMsg('تم حذف المنطقة')
+    setActiveFloorId((p) => p === floorId ? null : p)
   }
 
-  // ── Delete selected table ──────────────────────────────────────────────
-  async function handleDeleteSelected(): Promise<void> {
-    if (!selectedId) return
-    await deleteDiningTable(selectedId)
-    setTables((prev) => prev.filter((t) => t.id !== selectedId))
-    setSelectedId(null)
-    setMsg('تم حذف الترابيزة')
-  }
-
-  // ── Rotate selected ───────────────────────────────────────────────────
-  async function handleRotateSelected(): Promise<void> {
-    if (!selectedId) return
-    setTables((prev) =>
-      prev.map((t) => {
-        if (t.id !== selectedId) return t
-        const newRot = ((t.rotation ?? 0) + 90) % 360
-        void saveDiningTable({ ...t, rotation: newRot })
-        return { ...t, rotation: newRot }
-      })
-    )
-  }
-
-  const selectedTable = tables.find((t) => t.id === selectedId) ?? null
+  // ── Derived ────────────────────────────────────────────────────────────
+  const selectedTable = tables.find((t) => t.id === selectedTableId) ?? null
+  const selectedChairCount = selectedTableId ? chairsForTable(selectedTableId, chairs).length : 0
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="fp-page">
-      {/* ── Top toolbar ── */}
+
+      {/* ── Toolbar ── */}
       <div className="fp-toolbar">
         <div className="fp-toolbar__left">
-          {/* Floor tabs */}
-          {floors.map((floor) => (
-            <button
-              key={floor.id}
-              type="button"
-              className={`fp-floor-tab${activeFloorId === floor.id ? ' fp-floor-tab--active' : ''}`}
-              onClick={() => { setActiveFloorId(floor.id); setSelectedId(null) }}
-            >
-              {floor.nameAr}
+          {floors.map((fl) => (
+            <button key={fl.id} type="button"
+              className={`fp-floor-tab${activeFloorId === fl.id ? ' fp-floor-tab--active' : ''}`}
+              onClick={() => { setActiveFloorId(fl.id); setSelectedTableId(null); setSelectedChairId(null) }}>
+              {fl.nameAr}
             </button>
           ))}
-          <button
-            type="button"
-            className="fp-floor-tab fp-floor-tab--add"
+          <button type="button" className="fp-floor-tab fp-floor-tab--add"
             onClick={() => { setFloorFormOpen(true); setEditingFloor(null); setFloorName('') }}
-            title="إضافة منطقة جديدة"
-          >
-            <MdAdd />
-          </button>
+            title="إضافة منطقة"><MdAdd /></button>
         </div>
 
         <div className="fp-toolbar__right">
-          {/* Toggle buttons */}
-          <button type="button" className={`btn btn--sm ${showGrid ? 'btn--primary' : 'btn--secondary'}`} onClick={() => setShowGrid((v) => !v)} title="شبكة">
+          {/* Tool mode */}
+          <button type="button"
+            className={`btn btn--sm ${tool === 'select' ? 'btn--primary' : 'btn--secondary'}`}
+            onClick={() => setTool('select')} title="أداة التحديد">
+            ↖ تحديد
+          </button>
+          <button type="button"
+            className={`btn btn--sm ${tool === 'draw_wall' ? 'btn--primary' : 'btn--secondary'}`}
+            onClick={() => setTool('draw_wall')} title="رسم جدار / خط">
+            <MdDraw /> جدار
+          </button>
+
+          <div className="fp-toolbar__divider" />
+
+          {/* Grid + Zoom */}
+          <button type="button"
+            className={`btn btn--sm ${showGrid ? 'btn--primary' : 'btn--secondary'}`}
+            onClick={() => setShowGrid((v) => !v)} title="شبكة">
             {showGrid ? <MdGridOn /> : <MdGridOff />}
           </button>
-          <button type="button" className={`btn btn--sm ${showSeats ? 'btn--primary' : 'btn--secondary'}`} onClick={() => setShowSeats((v) => !v)} title="عرض الكراسي">
-            <MdTableRestaurant />
-          </button>
-          <button type="button" className="btn btn--secondary btn--sm" onClick={() => setZoom((z) => Math.max(MIN_ZOOM, +(z - 0.1).toFixed(1)))} title="تصغير"><MdZoomOut /></button>
+          <button type="button" className="btn btn--secondary btn--sm"
+            onClick={() => setZoom((z) => Math.max(MIN_ZOOM, +(z - 0.1).toFixed(1)))}><MdZoomOut /></button>
           <span className="fp-zoom-label">{Math.round(zoom * 100)}%</span>
-          <button type="button" className="btn btn--secondary btn--sm" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, +(z + 0.1).toFixed(1)))} title="تكبير"><MdZoomIn /></button>
+          <button type="button" className="btn btn--secondary btn--sm"
+            onClick={() => setZoom((z) => Math.min(MAX_ZOOM, +(z + 0.1).toFixed(1)))}><MdZoomIn /></button>
 
-          {/* Selected table actions */}
+          {/* Selected table context actions */}
           {selectedTable && (
             <>
               <div className="fp-toolbar__divider" />
-              <span className="fp-toolbar__selected-label">
-                {selectedTable.nameAr}
-              </span>
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditingTable(selectedTable)} title="تعديل">
-                <MdEdit />
+              <span className="fp-toolbar__selected-label">{selectedTable.nameAr}</span>
+
+              {/* Shape toggle */}
+              <button type="button"
+                className={`btn btn--sm ${(selectedTable.shape ?? 'rect') === 'rect' ? 'btn--primary' : 'btn--secondary'}`}
+                onClick={() => void toggleShape('rect')} title="شكل مربع">
+                ▭
               </button>
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => void handleRotateSelected()} title="تدوير 90°">
+              <button type="button"
+                className={`btn btn--sm ${selectedTable.shape === 'circle' ? 'btn--primary' : 'btn--secondary'}`}
+                onClick={() => void toggleShape('circle')} title="شكل دائري">
+                ●
+              </button>
+
+              {/* Rotate */}
+              <button type="button" className="btn btn--secondary btn--sm"
+                onClick={() => void handleRotate()} title="تدوير 90°">
                 <MdRotateRight />
               </button>
+
+              {/* Chair controls */}
+              <button type="button" className="btn btn--secondary btn--sm"
+                onClick={handleAddChair} title="إضافة كرسي">
+                + 🪑 ({selectedChairCount})
+              </button>
+
+              {/* Edit name/size */}
+              <button type="button" className="btn btn--secondary btn--sm"
+                onClick={() => setEditingTable(selectedTable)} title="تعديل">
+                <MdEdit />
+              </button>
+
               <ConfirmDeleteButton
                 confirmMessage={`حذف ترابيزة "${selectedTable.nameAr}"؟`}
-                onConfirm={handleDeleteSelected}
+                onConfirm={handleDeleteTable}
               />
+            </>
+          )}
+
+          {/* Selected chair delete */}
+          {selectedChairId && !selectedTable && (
+            <>
+              <div className="fp-toolbar__divider" />
+              <span className="fp-toolbar__selected-label">كرسي</span>
+              <button type="button" className="btn btn--danger btn--sm"
+                onClick={handleRemoveChair} title="حذف الكرسي">
+                <MdDelete />
+              </button>
+            </>
+          )}
+
+          {/* Selected wall delete */}
+          {selectedWallId && (
+            <>
+              <div className="fp-toolbar__divider" />
+              <span className="fp-toolbar__selected-label">جدار</span>
+              <button type="button" className="btn btn--danger btn--sm"
+                onClick={() => void handleDeleteWall()} title="حذف الجدار">
+                <MdDelete />
+              </button>
             </>
           )}
 
           <div className="fp-toolbar__divider" />
 
-          {/* Add table button */}
           {activeFloorId && (
-            <button
-              type="button"
-              className="btn btn--secondary btn--sm"
-              onClick={() => { setDropPos(null); setShowAddTable(true) }}
-              title="إضافة ترابيزة"
-            >
+            <button type="button" className="btn btn--secondary btn--sm"
+              onClick={() => { setDropPos(null); setShowAddTable(true) }}>
               <MdAddCircle /> ترابيزة
             </button>
           )}
 
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            onClick={() => void handleSaveAll()}
-            disabled={savingAll || !activeFloorId}
-            title="حفظ المواضع"
-          >
-            <MdSave /> {savingAll ? 'جارٍ الحفظ…' : 'حفظ'}
+          <button type="button" className="btn btn--primary btn--sm"
+            onClick={() => void handleSaveAll()} disabled={savingAll || !activeFloorId}>
+            <MdSave /> {savingAll ? 'جارٍ…' : 'حفظ'}
           </button>
         </div>
       </div>
 
-      {/* ── Message bar ── */}
+      {/* ── Message ── */}
       {msg && (
-        <div className={`fp-msg ${msg.includes('فشل') ? 'fp-msg--error' : 'fp-msg--ok'}`}>
-          {msg}
-        </div>
+        <div className={`fp-msg ${msg.includes('فشل') ? 'fp-msg--error' : 'fp-msg--ok'}`}>{msg}</div>
       )}
 
-      {/* ── No floor state ── */}
+      {/* ── Empty ── */}
       {floors.length === 0 && (
         <div className="fp-empty">
           <MdTableRestaurant className="fp-empty__icon" />
           <p>لا توجد مناطق بعد</p>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => { setFloorFormOpen(true); setEditingFloor(null); setFloorName('') }}
-          >
+          <button type="button" className="btn btn--primary"
+            onClick={() => { setFloorFormOpen(true); setEditingFloor(null); setFloorName('') }}>
             <MdAdd /> إضافة منطقة
           </button>
         </div>
       )}
 
-      {/* ── Sidebar + Canvas ── */}
+      {/* ── Workspace ── */}
       {activeFloor && (
         <div className="fp-workspace">
-          {/* Sidebar — floor properties */}
+
+          {/* Sidebar */}
           <aside className="fp-sidebar">
             <div className="fp-sidebar__section">
-              <h3>المنطقة الحالية</h3>
+              <h3>المنطقة</h3>
               <p className="fp-sidebar__name">{activeFloor.nameAr}</p>
-              <p className="fp-sidebar__meta">
-                {tables.length} ترابيزة — {activeFloor.width}×{activeFloor.height}
-              </p>
-              <button
-                type="button"
-                className="btn btn--secondary btn--sm"
-                style={{ width: '100%', marginTop: 8 }}
-                onClick={() => { setEditingFloor(activeFloor); setFloorName(activeFloor.nameAr); setFloorFormOpen(true) }}
-              >
+              <p className="fp-sidebar__meta">{tables.length} ترابيزة — {chairs.length} كرسي</p>
+              <button type="button" className="btn btn--secondary btn--sm" style={{ width: '100%', marginTop: 8 }}
+                onClick={() => { setEditingFloor(activeFloor); setFloorName(activeFloor.nameAr); setFloorFormOpen(true) }}>
                 <MdEdit /> تعديل المنطقة
               </button>
               <ConfirmDeleteButton
-                confirmMessage={`حذف منطقة "${activeFloor.nameAr}" وكل ترابيزاتها؟`}
+                confirmMessage={`حذف "${activeFloor.nameAr}"؟`}
                 onConfirm={() => handleDeleteFloor(activeFloor.id)}
               />
             </div>
 
             <div className="fp-sidebar__section">
-              <h3>قائمة الترابيزات</h3>
-              {tables.length === 0 && <p className="fp-sidebar__empty">انقر نقراً مزدوجاً على اللوحة لإضافة ترابيزة</p>}
-              {tables.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={`fp-table-list-item${selectedId === t.id ? ' fp-table-list-item--active' : ''}`}
-                  onClick={() => setSelectedId(t.id)}
-                >
-                  <span>{t.nameAr}</span>
-                  <span className="fp-table-list-item__meta">{t.seats ?? 4} 🪑</span>
-                </button>
-              ))}
+              <h3>الترابيزات</h3>
+              {tables.length === 0 && (
+                <p className="fp-sidebar__empty">نقر مزدوج على اللوحة لإضافة ترابيزة</p>
+              )}
+              {tables.map((t) => {
+                const count = chairsForTable(t.id, chairs).length
+                return (
+                  <button key={t.id} type="button"
+                    className={`fp-table-list-item${selectedTableId === t.id ? ' fp-table-list-item--active' : ''}`}
+                    onClick={() => { setSelectedTableId(t.id); setSelectedChairId(null) }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        style={{
+                          display: 'inline-block', width: 10, height: 10,
+                          background: tableColor(t.id, tables),
+                          borderRadius: t.shape === 'circle' ? '50%' : '2px',
+                          flexShrink: 0
+                        }}
+                      />
+                      {t.nameAr}
+                    </span>
+                    <span className="fp-table-list-item__meta">{count} 🪑</span>
+                  </button>
+                )
+              })}
             </div>
 
             <div className="fp-sidebar__section fp-sidebar__hint">
-              <p>💡 نقر مزدوج على اللوحة لإضافة ترابيزة في موضع محدد</p>
-              <p>💡 اسحب الترابيزة لتغيير موضعها</p>
-              <p>💡 اضغط حفظ لتثبيت المواضع</p>
+              <p>💡 نقر مزدوج لإضافة ترابيزة</p>
+              <p>💡 اسحب الكرسي لترحيله لترابيزة أخرى</p>
+              <p>💡 ▭ / ● لتغيير شكل الترابيزة</p>
+              <p>💡 أداة الجدار: اسحب لرسم خط</p>
             </div>
           </aside>
 
-          {/* Canvas scroll wrapper */}
+          {/* Canvas wrapper */}
           <div className="fp-canvas-wrapper">
-            <div
-              className="fp-canvas-scroll"
-              style={{ cursor: 'default' }}
-            >
+            <div className="fp-canvas-scroll">
               <div
                 ref={canvasRef}
-                className={`fp-canvas${showGrid ? ' fp-canvas--grid' : ''}`}
+                className={`fp-canvas${showGrid ? ' fp-canvas--grid' : ''}${tool === 'draw_wall' ? ' fp-canvas--draw-mode' : ''}`}
                 style={{
                   width:  activeFloor.width,
                   height: activeFloor.height,
                   transform: `scale(${zoom})`,
                   transformOrigin: 'top left',
-                  background: activeFloor.bgColor ?? undefined,
                   position: 'relative',
                   flexShrink: 0
                 }}
+                onPointerDown={handleCanvasPointerDown}
                 onPointerMove={handleCanvasPointerMove}
                 onPointerUp={handleCanvasPointerUp}
                 onPointerLeave={handleCanvasPointerUp}
                 onDoubleClick={handleCanvasDblClick}
+                onClick={handleCanvasClick}
               >
+                {/* Wall SVG layer */}
+                <WallLayer
+                  walls={walls}
+                  width={activeFloor.width}
+                  height={activeFloor.height}
+                  selectedWallId={selectedWallId}
+                  onSelectWall={(id) => { setSelectedWallId(id); setSelectedTableId(null); setSelectedChairId(null) }}
+                  drawingWall={drawingWall}
+                />
+
+                {/* Tables */}
                 {tables.map((t) => (
                   <TableNode
                     key={t.id}
-                    table={t}
-                    isSelected={selectedId === t.id}
-                    showSeats={showSeats}
+                    table={{ ...t, shape: t.shape ?? 'rect' }}
+                    isSelected={selectedTableId === t.id}
                     onPointerDown={handleTablePointerDown}
-                    onClick={(id) => setSelectedId((prev) => prev === id ? null : id)}
+                    onClick={(id) => {
+                      setSelectedTableId((p) => p === id ? null : id)
+                      setSelectedChairId(null)
+                    }}
+                  />
+                ))}
+
+                {/* Chairs */}
+                {chairs.map((c) => (
+                  <ChairNode
+                    key={c.id}
+                    chair={c}
+                    color={tableColor(c.tableId, tables)}
+                    isSelected={selectedChairId === c.id}
+                    onPointerDown={handleChairPointerDown}
+                    onClick={(id) => {
+                      setSelectedChairId((p) => p === id ? null : id)
+                      setSelectedTableId(null)
+                    }}
                   />
                 ))}
               </div>
             </div>
           </div>
+
         </div>
       )}
 
-      {/* ── Floor form modal ── */}
+      {/* ── Floor modal ── */}
       {floorFormOpen && (
         <div className="modal-overlay" onClick={() => setFloorFormOpen(false)}>
           <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
             <div className="order-details__header">
-              <h2 className="order-details__title">
-                {editingFloor ? 'تعديل المنطقة' : 'إضافة منطقة'}
-              </h2>
+              <h2 className="order-details__title">{editingFloor ? 'تعديل المنطقة' : 'إضافة منطقة'}</h2>
               <button type="button" className="order-details__close" onClick={() => setFloorFormOpen(false)}>✕</button>
             </div>
             <label className="field">
               <span>اسم المنطقة</span>
-              <input
-                autoFocus
-                value={floorName}
+              <input autoFocus value={floorName}
                 onChange={(e) => setFloorName(e.target.value)}
-                placeholder="مثال: الصالة / الحديقة / الطابق الثاني"
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveFloor() }}
-              />
+                placeholder="الصالة / الحديقة / الطابق الثاني"
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveFloor() }} />
             </label>
             <div className="modal-actions">
-              <button type="button" className="btn btn--primary" disabled={!floorName.trim()} onClick={() => void handleSaveFloor()}>
+              <button type="button" className="btn btn--primary"
+                disabled={!floorName.trim()} onClick={() => void handleSaveFloor()}>
                 <MdCheck /> {editingFloor ? 'تعديل' : 'إضافة'}
               </button>
               <button type="button" className="btn btn--secondary" onClick={() => setFloorFormOpen(false)}>إلغاء</button>
@@ -772,12 +1123,12 @@ export function FloorPlanPage(): React.ReactElement {
           floorId={activeFloorId}
           dropX={dropPos?.x}
           dropY={dropPos?.y}
-          onSave={(t) => {
+          onSave={(t, newChairs) => {
             setTables((prev) => [...prev, t])
-            setSelectedId(t.id)
+            setChairs((prev) => [...prev, ...newChairs])
+            setSelectedTableId(t.id)
             setShowAddTable(false)
             setDropPos(null)
-            setMsg(`تمت إضافة ترابيزة "${t.nameAr}"`)
           }}
           onClose={() => { setShowAddTable(false); setDropPos(null) }}
         />
@@ -790,11 +1141,11 @@ export function FloorPlanPage(): React.ReactElement {
           onSave={(updated) => {
             setTables((prev) => prev.map((t) => t.id === updated.id ? updated : t))
             setEditingTable(null)
-            setMsg(`تم تعديل ترابيزة "${updated.nameAr}"`)
           }}
           onClose={() => setEditingTable(null)}
         />
       )}
+
     </div>
   )
 }

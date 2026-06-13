@@ -4929,3 +4929,58 @@ select.inline-edit-input {
   border-color: #166534;
   background: #dcfce7;
 }
+
+/* ── Floor plan draw-wall mode cursor ───────────────────────────────────── */
+
+.fp-canvas--draw-mode {
+  cursor: crosshair !important;
+}
+
+.fp-canvas--draw-mode .fp-table {
+  pointer-events: none;
+}
+
+/* ── Chair node ──────────────────────────────────────────────────────────── */
+
+.fp-chair {
+  will-change: transform;
+  transition: box-shadow var(--t-fast) var(--ease-out);
+}
+
+.fp-chair--selected {
+  box-shadow: 0 0 0 3px var(--color-primary) !important;
+}
+
+/* ── Table node (updated — no more padding wrapper needed) ───────────────── */
+
+.fp-table {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+}
+
+.fp-table__label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  color: #fff;
+  text-align: center;
+  line-height: 1.2;
+  padding: 2px 4px;
+  pointer-events: none;
+  user-select: none;
+  word-break: break-all;
+}
+
+.fp-table {
+  background: var(--color-primary);
+  border: 2.5px solid var(--color-primary-dark);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.15);
+  transition: border-color var(--t-fast) var(--ease-out),
+              box-shadow var(--t-fast) var(--ease-out);
+}
+
+.fp-table--selected {
+  border-color: #fff !important;
+  box-shadow: 0 0 0 3px var(--color-primary), 2px 2px 6px rgba(0,0,0,0.25) !important;
+}

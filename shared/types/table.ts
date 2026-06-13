@@ -1,4 +1,4 @@
-export type TableShape = 'rect' | 'circle' | 'round_rect'
+export type TableShape = 'rect' | 'circle'
 
 export interface DiningTable {
   id: string
@@ -6,7 +6,7 @@ export interface DiningTable {
   categoryAr?: string
   sortOrder: number
   active: boolean
-  /** Floor this table belongs to (undefined = legacy / no floor) */
+  /** Floor this table belongs to */
   floorId?: string
   /** Position on the floor canvas — logical pixels */
   x?: number
@@ -16,24 +16,37 @@ export interface DiningTable {
   h?: number
   /** Visual shape */
   shape?: TableShape
-  /** Number of chairs drawn around the table */
+  /** Per-chair positions relative to canvas origin (not table) */
+  chairPositions?: Array<{ id: string; x: number; y: number }>
+  /** Legacy seat count — used when chairPositions is absent */
   seats?: number
-  /** Rotation in degrees (0, 90, 180, 270) */
+  /** Rotation in degrees */
   rotation?: number
   createdAt: number
   updatedAt: number
 }
 
-/** A floor / area of the restaurant (Salon, Garden, Rooftop …) */
+/** A wall/line segment drawn on the floor canvas */
+export interface WallSegment {
+  id: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  /** stroke width in px, default 6 */
+  thickness?: number
+  color?: string
+}
+
+/** A floor / area of the restaurant */
 export interface Floor {
   id: string
   nameAr: string
-  /** Canvas logical width in px */
   width: number
-  /** Canvas logical height in px */
   height: number
-  /** Background color of the canvas */
   bgColor?: string
+  /** Wall/line segments drawn on this floor */
+  walls?: WallSegment[]
   sortOrder: number
   active: boolean
   createdAt: number
