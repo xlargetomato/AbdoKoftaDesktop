@@ -1,0 +1,611 @@
+/**
+ * الحسابات — flexible account management.
+ * Manager creates accounts and picks exactly which features each one can access.
+ * Roles are presets only — permissions are stored per-user and fully customisable.
+ */
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import type { AppUser, UserRole, Permission } from '@shared/types'
+import {
+  ROLE_PRESET_PERMISSIONS,
+  ROLE_LABELS,
+  PERMISSION_LABELS,
+  PERMISSION_DESCRIPTIONS,
+  PERMISSION_GROUPS,
+  getUserPermissions
+} from '@shared/types/user'
+import {
+  listAllAccounts,
+  createAccount,
+  updateUserActive,
+  updateUserProfile,
+  resetCashierPassword,
+  deleteAccount
+} from '@renderer/features/auth/auth-service'
+import { useAuthStore } from '@renderer/features/auth/auth-store'
+import { ConfirmDeleteButton } from '@renderer/components/ConfirmDeleteButton'
+import { PasswordInput } from '@renderer/components/PasswordInput'
+import { hashPin } from '@renderer/features/auth/pin-store'
+import { MdEdit, MdCheck, MdClose, MdLock, MdPeople, MdShield, MdAdd, MdPerson, MdExpandMore, MdExpandLess } from 'react-icons/md'
+
+// ── Permission picker component ─────────────────────────────────────────────
+
+function PermissionPicker({
+  value,
+  onChange,
+  disabled = false
+}: {
+  value: Permission[]
+  onChange: (perms: Permission[]) => void
+  disabled?: boolean
+}): React.ReactElement {
+  function toggle(perm: Permission): void {
+    if (disabled) return
+    const next = value.includes(perm)
+      ? value.filter((p) => p !== perm)
+      : [...value, perm]
+    onChange(next)
+  }
+
+  function setAll(perms: Permission[]): void {
+    if (disabled) return
+    // Toggle group: if all checked → uncheck all, else check all
+    const allChecked = perms.every((p) => value.includes(p))
+    if (allChecked) {
+      onChange(value.filter((p) => !perms.includes(p)))
+    } else {
+      const merged = [...value]
+      for (const p of perms) {
+        if (!merged.includes(p)) merged.push(p)
+      }
+      onChange(merged)
+    }
+  }
+
+  return (
+    <div className="perm-picker">
+      {PERMISSION_GROUPS.map((group) => {
+        const allChecked = group.perms.every((p) => value.includes(p))
+        const someChecked = group.perms.some((p) => value.includes(p))
+        return (
+          <div key={group.label} className="perm-group">
+            <button
+              type="button"
+              className={`perm-group__header${allChecked ? ' perm-group__header--all' : someChecked ? ' perm-group__header--some' : ''}`}
+              onClick={() => setAll(group.perms)}
+              disabled={disabled}
+            >
+              <span className={`perm-group__check${allChecked ? ' perm-group__check--on' : ''}`}>
+                {allChecked ? '☑' : someChecked ? '⊟' : '☐'}
+              </span>
+              {group.label}
+            </button>
+            <div className="perm-group__items">
+              {group.perms.map((perm) => {
+                const checked = value.includes(perm)
+                return (
+                  <label key={perm} className={`perm-item${checked ? ' perm-item--on' : ''}${disabled ? ' perm-item--disabled' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(perm)}
+                      disabled={disabled}
+                      className="perm-item__checkbox"
+                    />
+                    <div className="perm-item__text">
+                      <span className="perm-item__label">{PERMISSION_LABELS[perm]}</span>
+                      <span className="perm-item__desc">{PERMISSION_DESCRIPTIONS[perm]}</span>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Preset bar ──────────────────────────────────────────────────────────────
+
+function PresetBar({ onSelect }: { onSelect: (perms: Permission[]) => void }): React.ReactElement {
+  const presets: { role: UserRole; label: string }[] = [
+    { role: 'cashier',    label: 'كاشير (أساسي)' },
+    { role: 'supervisor', label: 'مشرف' },
+    { role: 'manager',    label: 'مدير (كامل)' }
+  ]
+  return (
+    <div className="preset-bar">
+      <span className="preset-bar__label">ابدأ من قالب:</span>
+      {presets.map(({ role, label }) => (
+        <button
+          key={role}
+          type="button"
+          className="btn btn--secondary btn--sm"
+          onClick={() => onSelect(ROLE_PRESET_PERMISSIONS[role])}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Create account form ─────────────────────────────────────────────────────
+
+function CreateAccountForm({ currentUser, onCreated, onCancel }: {
+  currentUser: AppUser
+  onCreated: (msg: string) => Promise<void>
+  onCancel: () => void
+}): React.ReactElement {
+  const [form, setForm] = useState({
+    username: '', displayName: '', cashierCode: '', password: '',
+    role: 'cashier' as UserRole
+  })
+  const [perms, setPerms] = useState<Permission[]>([...ROLE_PRESET_PERMISSIONS.cashier])
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  function handleRoleChange(role: UserRole): void {
+    setForm((f) => ({ ...f, role }))
+    // Auto-fill permissions from preset, but keep it editable
+    setPerms([...ROLE_PRESET_PERMISSIONS[role]])
+  }
+
+  async function handleSubmit(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    setError('')
+    if (form.username.includes('@') || form.username.includes(' ')) {
+      setError('اسم المستخدم لا يمكن أن يحتوي على @ أو مسافات')
+      return
+    }
+    if (form.password.length < 6) { setError('كلمة المرور يجب أن تكون 6 أحرف على الأقل'); return }
+    if (perms.length === 0) { setError('اختر صلاحية واحدة على الأقل'); return }
+    setSaving(true)
+    try {
+      await createAccount(
+        {
+          username: form.username.trim(),
+          displayName: form.displayName.trim(),
+          cashierCode: form.cashierCode.trim().toUpperCase() || undefined,
+          role: form.role,
+          permissions: perms,
+          password: form.password
+        },
+        currentUser.id
+      )
+      await onCreated(`تم إنشاء حساب "${form.displayName}" بنجاح`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'فشل إنشاء الحساب')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="card accounts-form-card">
+      <h2 className="card__title"><MdAdd /> إنشاء حساب جديد</h2>
+      <form onSubmit={(e) => void handleSubmit(e)}>
+        {/* Basic info */}
+        <div className="settings-form-grid" style={{ marginBottom: 16 }}>
+          <label className="field">
+            <span>الاسم الكامل</span>
+            <input value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} placeholder="مثال: أحمد محمد" required />
+          </label>
+          <label className="field">
+            <span>اسم المستخدم (للدخول)</span>
+            <input dir="ltr" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} placeholder="ahmed" required autoComplete="off" />
+          </label>
+          <label className="field">
+            <span>كود الإيصال (2 حرف/رقم — اختياري)</span>
+            <input value={form.cashierCode} onChange={(e) => setForm((f) => ({ ...f, cashierCode: e.target.value.toUpperCase().slice(0, 2) }))} placeholder="AA" dir="ltr" maxLength={2} />
+          </label>
+          <label className="field">
+            <span>كلمة المرور</span>
+            <PasswordInput value={form.password} onChange={(v) => setForm((f) => ({ ...f, password: v }))} autoComplete="new-password" required />
+          </label>
+        </div>
+
+        {/* Permissions */}
+        <div className="perm-section">
+          <div className="perm-section__header">
+            <strong>الصلاحيات</strong>
+            <span className="perm-count">{perms.length} من {Object.keys(PERMISSION_LABELS).length}</span>
+          </div>
+          <PresetBar onSelect={setPerms} />
+          <PermissionPicker value={perms} onChange={setPerms} />
+        </div>
+
+        {error && <p className="form-error">{error}</p>}
+        <div className="form-actions">
+          <button type="submit" className="btn btn--primary" disabled={saving}>
+            {saving ? 'جارٍ الإنشاء...' : 'إنشاء الحساب'}
+          </button>
+          <button type="button" className="btn btn--secondary" onClick={onCancel}>إلغاء</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+// ── Account card ────────────────────────────────────────────────────────────
+
+const ROLE_BADGE_CLASS: Record<UserRole, string> = {
+  manager:    'role-badge role-badge--manager',
+  supervisor: 'role-badge role-badge--supervisor',
+  cashier:    'role-badge role-badge--cashier'
+}
+
+type EditMode = 'profile' | 'password' | 'pin' | null
+
+function AccountCard({ account, currentUser, onRefresh, setMessage }: {
+  account: AppUser
+  currentUser: AppUser
+  onRefresh: () => Promise<void>
+  setMessage: (m: string | null) => void
+}): React.ReactElement {
+  const isMe = account.id === currentUser.id
+  const [editMode, setEditMode] = useState<EditMode>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  // Profile edit state
+  const [editName, setEditName] = useState(account.displayName)
+  const [editCode, setEditCode] = useState(account.cashierCode ?? '')
+  const [editPerms, setEditPerms] = useState<Permission[]>(getUserPermissions(account))
+
+  // Password edit
+  const [editPassword, setEditPassword] = useState('')
+  // PIN edit
+  const [editPin, setEditPin] = useState('')
+
+  const [editError, setEditError] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+
+  function startEdit(mode: EditMode): void {
+    setEditMode(mode)
+    if (mode === 'profile') {
+      setEditName(account.displayName)
+      setEditCode(account.cashierCode ?? '')
+      setEditPerms(getUserPermissions(account))
+    }
+    setEditPassword('')
+    setEditPin('')
+    setEditError('')
+  }
+
+  function cancelEdit(): void {
+    setEditMode(null)
+    setEditError('')
+  }
+
+  async function saveProfile(): Promise<void> {
+    if (!editName.trim()) return
+    if (editPerms.length === 0) { setEditError('اختر صلاحية واحدة على الأقل'); return }
+    setEditSaving(true)
+    try {
+      await updateUserProfile(account.id, {
+        displayName: editName.trim(),
+        cashierCode: editCode.trim().toUpperCase() || undefined,
+        permissions: account.role === 'manager' ? undefined : editPerms
+      })
+      setMessage('تم تعديل بيانات الحساب')
+      cancelEdit()
+      await onRefresh()
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'فشل')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  async function savePassword(): Promise<void> {
+    if (editPassword.length < 6) { setEditError('كلمة المرور يجب أن تكون 6 أحرف على الأقل'); return }
+    setEditSaving(true)
+    try {
+      await resetCashierPassword(account.id, editPassword)
+      setMessage('تم تغيير كلمة المرور')
+      cancelEdit()
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'فشل')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  async function savePin(): Promise<void> {
+    if (editPin && (editPin.length !== 4 || !/^\d{4}$/.test(editPin))) {
+      setEditError('رمز PIN يجب أن يكون 4 أرقام')
+      return
+    }
+    setEditSaving(true)
+    try {
+      const pinHash = editPin ? await hashPin(editPin) : undefined
+      await updateUserProfile(account.id, { pinHash })
+      setMessage(editPin ? 'تم تعيين PIN' : 'تم حذف PIN')
+      cancelEdit()
+      await onRefresh()
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'فشل')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  const effectivePerms = getUserPermissions(account)
+
+  return (
+    <div className={`account-card${!account.active ? ' account-card--inactive' : ''}`}>
+      {/* Header */}
+      <div className="account-card__header">
+        <div className="account-card__avatar"><MdPerson aria-hidden="true" /></div>
+        <div className="account-card__info">
+          <span className="account-card__name">
+            {account.displayName}
+            {isMe && <em style={{ fontSize: '0.75rem', color: 'var(--color-muted)', marginRight: 6 }}>(أنت)</em>}
+          </span>
+          <span className="account-card__username" dir="ltr">@{account.username}</span>
+        </div>
+        <div className="account-card__badges">
+          <span className={ROLE_BADGE_CLASS[account.role]}>{ROLE_LABELS[account.role]}</span>
+          {account.cashierCode && <span className="code-badge" dir="ltr">{account.cashierCode}</span>}
+          {account.pinHash && <span className="pin-badge">PIN ✓</span>}
+          <span className="perm-count-badge">{effectivePerms.length} صلاحية</span>
+        </div>
+      </div>
+
+      {/* Permissions summary (collapsed/expanded) */}
+      {!editMode && (
+        <button
+          type="button"
+          className="perm-summary-toggle"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? <MdExpandLess /> : <MdExpandMore />}
+          {expanded ? 'إخفاء الصلاحيات' : 'عرض الصلاحيات'}
+        </button>
+      )}
+
+      {!editMode && expanded && (
+        <div className="perm-summary">
+          {PERMISSION_GROUPS.map((group) => {
+            const granted = group.perms.filter((p) => effectivePerms.includes(p))
+            if (granted.length === 0) return null
+            return (
+              <div key={group.label} className="perm-summary__group">
+                <span className="perm-summary__group-label">{group.label}</span>
+                <div className="perm-summary__items">
+                  {granted.map((p) => (
+                    <span key={p} className="perm-summary__item">{PERMISSION_LABELS[p]}</span>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Edit mode: profile + permissions */}
+      {editMode === 'profile' && (
+        <div className="account-edit-section">
+          <div className="settings-form-grid" style={{ marginBottom: 12 }}>
+            <label className="field">
+              <span>الاسم الكامل</span>
+              <input className="inline-edit-input" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
+            </label>
+            <label className="field">
+              <span>كود الإيصال</span>
+              <input className="inline-edit-input" value={editCode} maxLength={2} onChange={(e) => setEditCode(e.target.value.toUpperCase().slice(0, 2))} dir="ltr" style={{ width: 80 }} />
+            </label>
+          </div>
+          {account.role !== 'manager' && (
+            <div className="perm-section">
+              <div className="perm-section__header">
+                <strong>الصلاحيات</strong>
+                <span className="perm-count">{editPerms.length} من {Object.keys(PERMISSION_LABELS).length}</span>
+              </div>
+              <PresetBar onSelect={setEditPerms} />
+              <PermissionPicker value={editPerms} onChange={setEditPerms} />
+            </div>
+          )}
+          {account.role === 'manager' && (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', marginBottom: 8 }}>
+              حساب المدير يملك صلاحيات كاملة دائماً ولا يمكن تقييدها
+            </p>
+          )}
+          {editError && <p className="form-error">{editError}</p>}
+          <div className="table-actions" style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn--primary btn--sm" onClick={() => void saveProfile()} disabled={editSaving}><MdCheck /> {editSaving ? '...' : 'حفظ'}</button>
+            <button type="button" className="btn btn--secondary btn--sm" onClick={cancelEdit}><MdClose /></button>
+          </div>
+        </div>
+      )}
+
+      {editMode === 'password' && (
+        <div className="account-edit-inline">
+          <PasswordInput value={editPassword} onChange={setEditPassword} autoComplete="new-password" />
+          {editError && <p className="form-error">{editError}</p>}
+          <div className="table-actions">
+            <button type="button" className="btn btn--primary btn--sm" onClick={() => void savePassword()} disabled={editSaving}><MdCheck /> {editSaving ? '...' : 'حفظ'}</button>
+            <button type="button" className="btn btn--secondary btn--sm" onClick={cancelEdit}><MdClose /></button>
+          </div>
+        </div>
+      )}
+
+      {editMode === 'pin' && (
+        <div className="account-edit-inline">
+          <input
+            type="password" inputMode="numeric" maxLength={4}
+            value={editPin} onChange={(e) => setEditPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            placeholder="4 أرقام — اتركه فارغاً لحذف PIN"
+            style={{ width: 200, textAlign: 'center', letterSpacing: '0.4em' }}
+            autoFocus
+          />
+          {editError && <p className="form-error">{editError}</p>}
+          <div className="table-actions">
+            <button type="button" className="btn btn--primary btn--sm" onClick={() => void savePin()} disabled={editSaving}><MdCheck /> حفظ PIN</button>
+            <button type="button" className="btn btn--secondary btn--sm" onClick={cancelEdit}><MdClose /></button>
+          </div>
+        </div>
+      )}
+
+      {/* Action row */}
+      {!editMode && (
+        <div className="account-card__actions">
+          <button type="button" className="btn btn--secondary btn--sm" onClick={() => startEdit('profile')}><MdEdit /> تعديل</button>
+          <button type="button" className="btn btn--secondary btn--sm" onClick={() => startEdit('password')}><MdLock /> كلمة المرور</button>
+          <button type="button" className="btn btn--secondary btn--sm" onClick={() => startEdit('pin')}><MdShield /> PIN</button>
+          <button
+            type="button"
+            className={`btn btn--sm ${account.active ? 'btn--secondary' : 'btn--danger'}`}
+            onClick={() => void updateUserActive(account.id, !account.active).then(onRefresh)}
+            disabled={isMe}
+          >
+            {account.active ? 'مفعّل' : 'معطّل'}
+          </button>
+          {!isMe && (
+            <ConfirmDeleteButton
+              confirmMessage={`حذف حساب "${account.displayName}"؟`}
+              onConfirm={async () => {
+                await deleteAccount(account.id, currentUser.id)
+                setMessage(`تم حذف حساب "${account.displayName}"`)
+                await onRefresh()
+              }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main page ───────────────────────────────────────────────────────────────
+
+type AccountsTab = 'accounts' | 'roles'
+
+export function AccountsPage(): React.ReactElement {
+  const currentUser = useAuthStore((s) => s.user)!
+  const [activeTab, setActiveTab] = useState<AccountsTab>('accounts')
+  const [accounts, setAccounts] = useState<AppUser[]>([])
+  const [message, setMessage] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+
+  const load = useCallback(async () => {
+    setAccounts(await listAllAccounts())
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    if (!message) return
+    const t = setTimeout(() => setMessage(null), 4000)
+    return () => clearTimeout(t)
+  }, [message])
+
+  async function handleCreated(msg: string): Promise<void> {
+    setShowCreate(false)
+    setMessage(msg)
+    await load()
+  }
+
+  const tabs: { key: AccountsTab; label: string; icon: React.ReactNode; count?: number }[] = [
+    { key: 'accounts', label: 'الحسابات',          icon: <MdPeople />,  count: accounts.length },
+    { key: 'roles',    label: 'دليل الصلاحيات',     icon: <MdShield /> }
+  ]
+
+  return (
+    <div className="unified-page">
+      <div className="inner-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === t.key}
+            className={`inner-tab${activeTab === t.key ? ' inner-tab--active' : ''}`}
+            onClick={() => setActiveTab(t.key)}
+          >
+            {t.icon}
+            {t.label}
+            {t.count !== undefined && <span className="inner-tab__count">{t.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {message && (
+        <p className={`form-message ${message.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`} role="status">
+          {message}
+        </p>
+      )}
+
+      {activeTab === 'accounts' && (
+        <div className="tab-content">
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn--primary" onClick={() => setShowCreate((v) => !v)}>
+              <MdAdd aria-hidden="true" />
+              {showCreate ? 'إلغاء' : 'إضافة حساب جديد'}
+            </button>
+          </div>
+
+          {showCreate && (
+            <CreateAccountForm
+              currentUser={currentUser}
+              onCreated={handleCreated}
+              onCancel={() => setShowCreate(false)}
+            />
+          )}
+
+          <div className="accounts-list">
+            {accounts.length === 0 && <p className="report-empty">لا توجد حسابات بعد</p>}
+            {accounts.map((account) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                currentUser={currentUser}
+                onRefresh={load}
+                setMessage={setMessage}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'roles' && (
+        <div className="tab-content">
+          <div className="roles-info-banner">
+            <MdShield aria-hidden="true" />
+            هذه قوالب مساعدة فقط — يمكنك تخصيص صلاحيات كل حساب بشكل مستقل عند الإنشاء أو التعديل
+          </div>
+          <div className="roles-grid">
+            {(['cashier', 'supervisor', 'manager'] as UserRole[]).map((role) => {
+              const perms = ROLE_PRESET_PERMISSIONS[role]
+              const ROLE_BADGE_CLASS_MAP: Record<UserRole, string> = {
+                manager: 'role-badge role-badge--manager',
+                supervisor: 'role-badge role-badge--supervisor',
+                cashier: 'role-badge role-badge--cashier'
+              }
+              return (
+                <div key={role} className={`role-card role-card--${role}`}>
+                  <div className="role-card__header">
+                    <span className={ROLE_BADGE_CLASS_MAP[role]}>{ROLE_LABELS[role]}</span>
+                    <p className="role-card__desc">{perms.length} صلاحية في القالب الافتراضي</p>
+                  </div>
+                  <ul className="role-card__perms">
+                    {(Object.entries(PERMISSION_LABELS) as [Permission, string][]).map(([perm, label]) => {
+                      const allowed = perms.includes(perm)
+                      return (
+                        <li key={perm} className={`role-perm${allowed ? ' role-perm--on' : ' role-perm--off'}`}>
+                          <span className="role-perm__dot">{allowed ? '✓' : '✗'}</span>
+                          {label}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

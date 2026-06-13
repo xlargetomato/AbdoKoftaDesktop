@@ -23,7 +23,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    title: 'عبده كفتة',
+    title: 'SHIFT POS',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       sandbox: false,

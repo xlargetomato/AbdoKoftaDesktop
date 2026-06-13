@@ -12,7 +12,7 @@ import { PinLockScreen } from '@renderer/components/PinLockScreen'
 import { usePinBootstrap } from '@renderer/features/auth/use-pin-bootstrap'
 import { applyThemeColor } from '@renderer/features/theme/theme-store'
 import { getSettings } from '@renderer/features/orders/order-service'
-import { CASHIER_NAV, MANAGER_NAV } from '@renderer/config/navigation'
+import { CASHIER_NAV, MANAGER_NAV, SUPERVISOR_NAV } from '@renderer/config/navigation'
 
 const LoginPage = lazy(() =>
   import('@renderer/features/auth/LoginPage').then((m) => ({ default: m.LoginPage }))
@@ -35,25 +35,14 @@ const ManagerDashboard = lazy(() =>
     default: m.ManagerDashboard
   }))
 )
-const IngredientsPage = lazy(() =>
-  import('@renderer/features/manager/IngredientsPage').then((m) => ({
-    default: m.IngredientsPage
-  }))
+const ItemsPage = lazy(() =>
+  import('@renderer/features/manager/ItemsPage').then((m) => ({ default: m.ItemsPage }))
 )
-const InventoryPage = lazy(() =>
-  import('@renderer/features/manager/InventoryPage').then((m) => ({
-    default: m.InventoryPage
-  }))
+const PurchasesPage = lazy(() =>
+  import('@renderer/features/manager/PurchasesPage').then((m) => ({ default: m.PurchasesPage }))
 )
-const MenuManagementPage = lazy(() =>
-  import('@renderer/features/manager/MenuManagementPage').then((m) => ({
-    default: m.MenuManagementPage
-  }))
-)
-const CashiersPage = lazy(() =>
-  import('@renderer/features/manager/CashiersPage').then((m) => ({
-    default: m.CashiersPage
-  }))
+const AccountsPage = lazy(() =>
+  import('@renderer/features/manager/AccountsPage').then((m) => ({ default: m.AccountsPage }))
 )
 const ShiftsPage = lazy(() =>
   import('@renderer/features/manager/ShiftsPage').then((m) => ({
@@ -89,6 +78,14 @@ function CashierLayout(): React.ReactElement {
   )
 }
 
+function SupervisorLayout(): React.ReactElement {
+  return (
+    <AppShell nav={SUPERVISOR_NAV}>
+      <Outlet />
+    </AppShell>
+  )
+}
+
 function ManagerLayout(): React.ReactElement {
   return (
     <AppShell nav={MANAGER_NAV}>
@@ -102,9 +99,8 @@ function RootRedirect(): React.ReactElement {
   const loading = useAuthStore((s) => s.loading)
   if (loading) return <PageLoader />
   if (!user) return <Navigate to="/login" replace />
-  return (
-    <Navigate to={user.role === 'manager' ? '/manager' : '/pos'} replace />
-  )
+  if (user.role === 'manager') return <Navigate to="/manager" replace />
+  return <Navigate to="/pos" replace />
 }
 
 function LazyPage({ children }: { children: React.ReactNode }): React.ReactElement {
@@ -141,30 +137,21 @@ export default function App(): React.ReactElement {
 
         <Route element={<ProtectedRoute roles={['cashier']} />}>
           <Route element={<CashierLayout />}>
-            <Route
-              path="/pos"
-              element={
-                <LazyPage>
-                  <PosPage />
-                </LazyPage>
-              }
-            />
-            <Route
-              path="/pos/history"
-              element={
-                <LazyPage>
-                  <OrderHistoryPage />
-                </LazyPage>
-              }
-            />
-            <Route
-              path="/pos/inventory"
-              element={
-                <LazyPage>
-                  <CashierInventoryPage />
-                </LazyPage>
-              }
-            />
+            <Route path="/pos" element={<LazyPage><PosPage /></LazyPage>} />
+            <Route path="/pos/history" element={<LazyPage><OrderHistoryPage /></LazyPage>} />
+            <Route path="/pos/inventory" element={<LazyPage><CashierInventoryPage /></LazyPage>} />
+          </Route>
+        </Route>
+
+        <Route element={<ProtectedRoute roles={['supervisor']} />}>
+          <Route element={<SupervisorLayout />}>
+            <Route path="/supervisor/pos" element={<LazyPage><PosPage /></LazyPage>} />
+            <Route path="/supervisor/history" element={<LazyPage><OrderHistoryPage /></LazyPage>} />
+            <Route path="/supervisor/inventory" element={<LazyPage><CashierInventoryPage /></LazyPage>} />
+            <Route path="/supervisor/shifts" element={<LazyPage><ShiftsPage /></LazyPage>} />
+            <Route path="/supervisor/purchases" element={<LazyPage><PurchasesPage /></LazyPage>} />
+            <Route path="/supervisor/suppliers" element={<LazyPage><SuppliersPage /></LazyPage>} />
+            <Route path="/supervisor/reports" element={<LazyPage><ReportsPage /></LazyPage>} />
           </Route>
         </Route>
 
@@ -179,26 +166,18 @@ export default function App(): React.ReactElement {
               }
             />
             <Route
-              path="/manager/ingredients"
+              path="/manager/items"
               element={
                 <LazyPage>
-                  <IngredientsPage />
+                  <ItemsPage />
                 </LazyPage>
               }
             />
             <Route
-              path="/manager/inventory"
+              path="/manager/purchases"
               element={
                 <LazyPage>
-                  <InventoryPage />
-                </LazyPage>
-              }
-            />
-            <Route
-              path="/manager/menu"
-              element={
-                <LazyPage>
-                  <MenuManagementPage />
+                  <PurchasesPage />
                 </LazyPage>
               }
             />
@@ -206,7 +185,7 @@ export default function App(): React.ReactElement {
               path="/manager/cashiers"
               element={
                 <LazyPage>
-                  <CashiersPage />
+                  <AccountsPage />
                 </LazyPage>
               }
             />

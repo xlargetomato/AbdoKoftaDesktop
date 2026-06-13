@@ -166,14 +166,27 @@ export async function fetchAppUser(uid: string): Promise<AppUser | null> {
   return getCachedDoc<AppUser>(COLLECTIONS.users, uid)
 }
 
-/** List users by role from SQLite */
+/** List all non-manager users from SQLite */
 export async function listUsersByRole(role: UserRole): Promise<AppUser[]> {
   const users = await getCachedDocs<AppUser>(COLLECTIONS.users)
   return users.filter((u) => u.role === role)
 }
 
-/** Create a cashier account in SQLite */
-export async function createCashierAccount(
+/** List all accounts except the current manager's own account */
+export async function listAllAccounts(excludeId?: string): Promise<AppUser[]> {
+  const users = await getCachedDocs<AppUser>(COLLECTIONS.users)
+  return users
+    .filter((u) => !excludeId || u.id !== excludeId)
+    .sort((a, b) => {
+      const roleOrder: Record<UserRole, number> = { manager: 0, supervisor: 1, cashier: 2 }
+      const ro = (roleOrder[a.role] ?? 3) - (roleOrder[b.role] ?? 3)
+      if (ro !== 0) return ro
+      return a.displayName.localeCompare(b.displayName, 'ar')
+    })
+}
+
+/** Create any account (cashier, supervisor, or additional manager) */
+export async function createAccount(
   data: AppUserCreate,
   _createdByManagerId: string
 ): Promise<AppUser> {
@@ -184,10 +197,10 @@ export async function createCashierAccount(
   if (data.cashierCode) {
     const code = data.cashierCode.trim().toUpperCase()
     if (!/^[A-Z0-9]{2}$/.test(code)) {
-      throw new Error('كود الكاشير يجب أن يكون حرفين أو رقمين فقط')
+      throw new Error('كود الإيصال يجب أن يكون حرفين أو رقمين فقط')
     }
     const taken = existing.some((u) => u.cashierCode?.toUpperCase() === code)
-    if (taken) throw new Error('كود الكاشير مستخدم بالفعل')
+    if (taken) throw new Error('كود الإيصال مستخدم بالفعل')
   }
 
   const now = Date.now()
@@ -198,6 +211,7 @@ export async function createCashierAccount(
     displayName: data.displayName,
     cashierCode: data.cashierCode?.toUpperCase(),
     role: data.role,
+    permissions: data.permissions,
     active: true,
     createdAt: now,
     updatedAt: now
@@ -223,6 +237,9 @@ export async function createCashierAccount(
   return user
 }
 
+/** Backwards-compat alias */
+export const createCashierAccount = createAccount
+
 export async function updateUserActive(userId: string, active: boolean): Promise<void> {
   const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
   if (!cached) return
@@ -231,7 +248,7 @@ export async function updateUserActive(userId: string, active: boolean): Promise
 
 export async function updateUserProfile(
   userId: string,
-  patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash' | 'cashierCode'>>
+  patch: Partial<Pick<AppUser, 'displayName' | 'username' | 'pinHash' | 'cashierCode' | 'role' | 'permissions'>>
 ): Promise<void> {
   const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
   if (!cached) return
@@ -265,24 +282,19 @@ export async function resetCashierPassword(userId: string, newPassword: string):
   })
 }
 
-export async function deleteCashierAccount(userId: string): Promise<void> {
-  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
-  if (cached && cached.role !== 'cashier') {
-    throw new Error('يمكن حذف حسابات الكاشير فقط')
+export async function deleteAccount(userId: string, currentUserId: string): Promise<void> {
+  if (userId === currentUserId) {
+    throw new Error('لا يمكنك حذف حسابك الخاص')
   }
 
-  // Mark inactive locally
+  const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
   if (cached) {
     await cacheDocs(COLLECTIONS.users, [{ ...cached, active: false, updatedAt: Date.now() }])
   }
 
-  // Remove from local auth cache
   writeAuthCache(readAuthCache().filter((e) => e.userId !== userId))
 
-  // Background: delete from Firebase Auth (fire-and-forget)
-  void window.electronAPI.deleteAuthUser(userId).catch(() => {
-    // Best-effort
-  })
+  void window.electronAPI.deleteAuthUser(userId).catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
