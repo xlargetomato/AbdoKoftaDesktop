@@ -204,6 +204,7 @@ export function AppShell({ nav, children }: AppShellProps): React.ReactElement {
     || location.pathname === '/manager/purchases'
     || location.pathname === '/manager/items'
     || location.pathname === '/manager/cashiers'
+    || location.pathname === '/manager/tables'
   const primaryPane = panes[0]
   // Use router location as source of truth for sidebar active state
   const focusedActivePath = location.pathname

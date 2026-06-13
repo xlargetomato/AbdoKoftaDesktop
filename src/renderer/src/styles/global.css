@@ -4573,3 +4573,359 @@ select.inline-edit-input {
   font-weight: 700;
   margin-top: 4px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Floor Plan Page
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.fp-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+
+.fp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--color-text);
+  border-bottom: 2px solid var(--color-primary);
+  min-height: 48px;
+  overflow-x: auto;
+}
+
+.fp-toolbar__left,
+.fp-toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.fp-toolbar__divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255,255,255,0.2);
+  flex-shrink: 0;
+}
+
+.fp-toolbar__selected-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fff;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-zoom-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.8);
+  min-width: 38px;
+  text-align: center;
+}
+
+/* Floor tab buttons */
+.fp-floor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.75);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition:
+    background var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+
+.fp-floor-tab--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+@media (hover: hover) {
+  .fp-floor-tab:not(.fp-floor-tab--active):hover {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.4);
+    color: #fff;
+  }
+}
+
+.fp-floor-tab--add {
+  padding: 0 8px;
+  font-size: 1rem;
+}
+
+/* ── Message bar ──────────────────────────────────────────────────────────── */
+
+.fp-msg {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border-bottom: 2px solid transparent;
+  animation: fp-msg-in 150ms var(--ease-out);
+}
+
+@keyframes fp-msg-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fp-msg--ok {
+  background: #f0fdf4;
+  color: #166534;
+  border-color: #22c55e;
+}
+
+.fp-msg--error {
+  background: #fef2f2;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+
+.fp-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--color-muted);
+}
+
+.fp-empty__icon {
+  width: 64px;
+  height: 64px;
+  opacity: 0.25;
+}
+
+.fp-empty p {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* ── Workspace (sidebar + canvas) ─────────────────────────────────────────── */
+
+.fp-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+
+.fp-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-left: 2px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  direction: rtl;
+}
+
+.fp-sidebar__section {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.fp-sidebar__section h3 {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+}
+
+.fp-sidebar__name {
+  font-weight: 800;
+  font-size: 0.95rem;
+  margin: 0 0 4px;
+}
+
+.fp-sidebar__meta {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  margin: 0 0 8px;
+}
+
+.fp-sidebar__empty {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.fp-sidebar__hint {
+  background: var(--color-bg);
+  margin-top: auto;
+}
+
+.fp-sidebar__hint p {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin: 0 0 6px;
+  line-height: 1.4;
+}
+
+/* Sidebar table list items */
+.fp-table-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 3px;
+  background: var(--color-bg);
+  border: 1.5px solid var(--color-border-light);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: right;
+  transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.fp-table-list-item--active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+
+@media (hover: hover) {
+  .fp-table-list-item:not(.fp-table-list-item--active):hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+  }
+}
+
+.fp-table-list-item__meta {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+/* ── Canvas wrapper & canvas ─────────────────────────────────────────────── */
+
+.fp-canvas-wrapper {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: #d0d4d9;
+  background-image:
+    radial-gradient(circle, #b0b5bc 1px, transparent 1px);
+  background-size: 24px 24px;
+  padding: 24px;
+}
+
+.fp-canvas-scroll {
+  display: inline-flex;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+/* The actual canvas — white board */
+.fp-canvas {
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Grid overlay */
+.fp-canvas--grid {
+  background-image:
+    linear-gradient(to right,  rgba(0,0,0,0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-color: #fff;
+}
+
+/* ── Table node ──────────────────────────────────────────────────────────── */
+
+.fp-table {
+  /* Outer wrapper — includes seat padding area */
+  box-sizing: content-box;
+}
+
+.fp-table__body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary);
+  border: 2.5px solid var(--color-primary-dark);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.15);
+  transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+  overflow: hidden;
+}
+
+.fp-table--selected .fp-table__body {
+  background: var(--color-primary-dark);
+  border-color: #fff;
+  box-shadow: 0 0 0 3px var(--color-primary), 2px 2px 0 rgba(0,0,0,0.15);
+}
+
+.fp-table__label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  color: #fff;
+  text-align: center;
+  line-height: 1.2;
+  padding: 2px 4px;
+  pointer-events: none;
+  user-select: none;
+  word-break: break-all;
+}
+
+/* Chair */
+.fp-seat {
+  background: var(--color-primary-soft);
+  border: 2px solid var(--color-primary);
+  box-sizing: border-box;
+}
+
+/* Occupied table state (used by POS view — added later) */
+.fp-table--occupied .fp-table__body {
+  background: var(--color-danger);
+  border-color: #991b1b;
+}
+
+.fp-table--available .fp-table__body {
+  background: var(--color-success);
+  border-color: #166534;
+}
+
+.fp-table--available .fp-seat {
+  border-color: #166534;
+  background: #dcfce7;
+}

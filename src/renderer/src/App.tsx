@@ -78,6 +78,12 @@ const AuditLogPage = lazy(() =>
   }))
 )
 
+const FloorPlanPage = lazy(() =>
+  import('@renderer/features/manager/FloorPlanPage').then((m) => ({
+    default: m.FloorPlanPage
+  }))
+)
+
 function CashierLayout(): React.ReactElement {
   return (
     <AppShell nav={CASHIER_NAV}>
@@ -248,6 +254,14 @@ export default function App(): React.ReactElement {
               element={
                 <LazyPage>
                   <AuditLogPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/tables"
+              element={
+                <LazyPage>
+                  <FloorPlanPage />
                 </LazyPage>
               }
             />

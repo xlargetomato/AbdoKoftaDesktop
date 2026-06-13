@@ -12,6 +12,7 @@ import type {
   OrderItem,
   Payment,
   DiningTable,
+  Floor,
   Recipe,
   AppSettings,
   Shift,
@@ -35,6 +36,7 @@ export interface FirestoreSchema {
   order_items: FirestoreDoc<OrderItem>
   payments: FirestoreDoc<Payment>
   dining_tables: FirestoreDoc<DiningTable>
+  floors: FirestoreDoc<Floor>
   shifts: FirestoreDoc<Shift>
   cash_drawer_transactions: FirestoreDoc<CashDrawerTransaction>
   suppliers: FirestoreDoc<Supplier>

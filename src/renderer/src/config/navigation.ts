@@ -12,7 +12,8 @@ import {
   MdPersonSearch,
   MdWorkHistory,
   MdShoppingCart,
-  MdSecurity
+  MdSecurity,
+  MdTableBar
 } from 'react-icons/md'
 
 export { MdLogout }
@@ -44,7 +45,8 @@ export const NAV_ICON_MAP: Record<string, IconType> = {
   MdPersonSearch,
   MdWorkHistory,
   MdShoppingCart,
-  MdSecurity
+  MdSecurity,
+  MdTableBar
 }
 
 // Cashier: only POS routes
@@ -69,6 +71,7 @@ export const SUPERVISOR_NAV: NavItem[] = [
 export const MANAGER_NAV: NavItem[] = [
   { to: '/manager',                 label: 'لوحة التحكم',   hint: 'ملخص اليوم والوصول السريع',  icon: MdDashboard,    iconKey: 'MdDashboard',   end: true },
   { to: '/manager/items',           label: 'الأصناف',       hint: 'القائمة والتصنيفات والوصفات', icon: MdMenuBook,     iconKey: 'MdMenuBook' },
+  { to: '/manager/tables',          label: 'الترابيزات',    hint: 'تخطيط الصالة والمناطق',      icon: MdTableBar,     iconKey: 'MdTableBar' },
   { to: '/manager/purchases',       label: 'المشتريات',     hint: 'مخزون وشراء وهدر',           icon: MdShoppingCart, iconKey: 'MdShoppingCart' },
   { to: '/manager/cashiers',        label: 'الحسابات',      hint: 'المستخدمون والصلاحيات',      icon: MdPeople,       iconKey: 'MdPeople' },
   { to: '/manager/shifts',          label: 'الشيفتات',      hint: 'مراجعة وتقفيل وأرشفة',       icon: MdWorkHistory,  iconKey: 'MdWorkHistory' },

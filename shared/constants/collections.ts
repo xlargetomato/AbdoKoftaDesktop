@@ -10,6 +10,7 @@ export const COLLECTIONS = {
   orderItems: 'order_items',
   payments: 'payments',
   diningTables: 'dining_tables',
+  floors: 'floors',
   shifts: 'shifts',
   cashDrawerTransactions: 'cash_drawer_transactions',
   suppliers: 'suppliers',

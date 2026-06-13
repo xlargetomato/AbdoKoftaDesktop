@@ -478,50 +478,15 @@ export function SettingsPage(): React.ReactElement {
         {activeSettingsTab === 'tables' && (
           <div className="card">
             <h2 className="card__title"><MdTableRestaurant style={{ verticalAlign: 'middle', marginLeft: 6 }} />ترابيزات الصالة</h2>
-            {tableMsg && <p className={`form-message ${tableMsg.includes('فشل') ? 'form-message--error' : 'form-message--ok'}`}>{tableMsg}</p>}
-            <form className="table-manager-form settings-form-grid" onSubmit={(e) => void handleTableSave(e)}>
-              <label className="field">
-                <span>اسم / رقم الترابيزة</span>
-                <input value={tableForm.nameAr} onChange={(e) => setTableForm((f) => ({ ...f, nameAr: e.target.value }))} placeholder="مثال: 1 أو VIP" required />
-              </label>
-              <label className="field">
-                <span>التصنيف</span>
-                <input value={tableForm.categoryAr} onChange={(e) => setTableForm((f) => ({ ...f, categoryAr: e.target.value }))} placeholder="داخلي / خارجي" />
-              </label>
-              <label className="field">
-                <span>الترتيب</span>
-                <input type="number" value={tableForm.sortOrder} onChange={(e) => setTableForm((f) => ({ ...f, sortOrder: e.target.value }))} style={{ maxWidth: 100 }} />
-              </label>
-              <div className="form-actions settings-form-grid__full table-manager-form__actions">
-                <button type="submit" className="btn btn--primary" disabled={tableSaving}>
-                  <MdSave /> {tableSaving ? 'جارٍ الحفظ...' : tableForm.id ? 'تحديث الترابيزة' : 'إضافة ترابيزة'}
-                </button>
-                {tableForm.id && (
-                  <button type="button" className="btn btn--secondary" onClick={() => setTableForm({ id: '', nameAr: '', categoryAr: '', sortOrder: '0' })}>
-                    إلغاء التعديل
-                  </button>
-                )}
-              </div>
-            </form>
-            <div className="table-manager-list">
-              {tables.length === 0 ? (
-                <p className="report-empty">لا توجد ترابيزات بعد</p>
-              ) : (
-                tables.map((table) => (
-                  <div key={table.id} className={`table-manager-row${!table.active ? ' table-manager-row--inactive' : ''}`}>
-                    <div>
-                      <strong>{table.nameAr}</strong>
-                      <span>{table.categoryAr || 'بدون تصنيف'} — ترتيب {table.sortOrder}</span>
-                    </div>
-                    <div className="table-actions">
-                      <button type="button" className="btn btn--secondary btn--sm" onClick={() => editTable(table)}>تعديل</button>
-                      <button type="button" className="btn btn--secondary btn--sm" onClick={async () => { await setDiningTableActive(table.id, !table.active); await reloadTables() }}>
-                        {table.active ? 'إخفاء' : 'تفعيل'}
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
+            <div style={{ padding: '16px 0', fontSize: '0.9rem', color: 'var(--color-muted)' }}>
+              تم نقل إدارة الترابيزات إلى صفحة مستقلة.{' '}
+              <a
+                href="#/manager/tables"
+                style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}
+                onClick={(e) => { e.preventDefault(); window.location.hash = '/manager/tables' }}
+              >
+                الذهاب إلى صفحة الترابيزات ←
+              </a>
             </div>
           </div>
         )}
