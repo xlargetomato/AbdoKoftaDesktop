@@ -33,7 +33,8 @@ import {
 const GRID        = 20
 const CHAIR_R     = 11    // chair radius in px
 const CHAIR_GAP   = 5     // gap between chair edge and table edge
-const SNAP_ASSIGN = 40    // px: drop chair this close to a table to assign it
+const SNAP_ASSIGN = 40    // px: drop chair near a table to reassign it
+const MAX_ORBIT_R = 80    // px: max distance a chair can be from its table centre
 const MIN_ZOOM    = 0.4
 const MAX_ZOOM    = 2.0
 const DEFAULT_W   = 80
@@ -45,6 +46,19 @@ const WALL_W      = 6
 
 function snap(v: number): number { return Math.round(v / GRID) * GRID }
 function uid(): string { return crypto.randomUUID() }
+
+/**
+ * Clamp (px, py) so it stays within MAX_ORBIT_R of (cx, cy).
+ * Returns the clamped point.
+ */
+function clampToOrbit(px: number, py: number, cx: number, cy: number, maxR: number): { x: number; y: number } {
+  const dx = px - cx
+  const dy = py - cy
+  const dist = Math.hypot(dx, dy)
+  if (dist <= maxR) return { x: px, y: py }
+  const scale = maxR / dist
+  return { x: cx + dx * scale, y: cy + dy * scale }
+}
 
 function defaultChairPositions(
   tableX: number, tableY: number,
@@ -452,6 +466,8 @@ export function FloorPlanPage(): React.ReactElement {
   const dragOffset  = useRef({ x: 0, y: 0 })
   const dragNodeRef = useRef<HTMLDivElement | null>(null)
   const canvasRef   = useRef<HTMLDivElement>(null)
+  /** True once the pointer has moved >4px during a drag — used to distinguish click vs drag */
+  const dragMoved   = useRef(false)
 
   // ── Wall drawing refs ──────────────────────────────────────────────────
   const [drawingWall, setDrawingWall] = useState<WallSegment | null>(null)
@@ -530,6 +546,7 @@ export function FloorPlanPage(): React.ReactElement {
     const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
     dragOffset.current = { x: cx - (table.x ?? 0), y: cy - (table.y ?? 0) }
     dragging.current   = { kind: 'table', id }
+    dragMoved.current  = false
     dragNodeRef.current = e.currentTarget
     dragNodeRef.current.style.zIndex = '100'
     dragNodeRef.current.style.cursor = 'grabbing'
@@ -552,6 +569,7 @@ export function FloorPlanPage(): React.ReactElement {
     const { x: cx, y: cy } = canvasCoord(e.clientX, e.clientY)
     dragOffset.current = { x: cx - chair.x, y: cy - chair.y }
     dragging.current   = { kind: 'chair', id }
+    dragMoved.current  = false
     dragNodeRef.current = e.currentTarget
     dragNodeRef.current.style.zIndex = '200'
     dragNodeRef.current.style.cursor = 'grabbing'
@@ -581,6 +599,7 @@ export function FloorPlanPage(): React.ReactElement {
 
     if (!dragging.current || !dragNodeRef.current) return
     e.preventDefault()
+    dragMoved.current = true
 
     if (dragging.current.kind === 'table') {
       const table = tables.find((t) => t.id === dragging.current!.id)
@@ -592,11 +611,25 @@ export function FloorPlanPage(): React.ReactElement {
       dragNodeRef.current.style.left = `${nx}px`
       dragNodeRef.current.style.top  = `${ny}px`
     } else {
-      // chair
-      const nx = snap(cx - dragOffset.current.x)
-      const ny = snap(cy - dragOffset.current.y)
-      dragNodeRef.current.style.left = `${nx - CHAIR_R}px`
-      dragNodeRef.current.style.top  = `${ny - CHAIR_R}px`
+      // Chair — clamp to orbit around its table
+      const chairId = dragging.current.id
+      const chair   = chairs.find((c) => c.id === chairId)
+      const table   = chair ? tables.find((t) => t.id === chair.tableId) : null
+
+      let rawX = cx - dragOffset.current.x
+      let rawY = cy - dragOffset.current.y
+
+      if (table) {
+        const tcx = (table.x ?? 0) + (table.w ?? DEFAULT_W) / 2
+        const tcy = (table.y ?? 0) + (table.h ?? DEFAULT_H) / 2
+        const orbitR = Math.max(table.w ?? DEFAULT_W, table.h ?? DEFAULT_H) / 2 + MAX_ORBIT_R
+        const clamped = clampToOrbit(rawX, rawY, tcx, tcy, orbitR)
+        rawX = clamped.x
+        rawY = clamped.y
+      }
+
+      dragNodeRef.current.style.left = `${rawX - CHAIR_R}px`
+      dragNodeRef.current.style.top  = `${rawY - CHAIR_R}px`
     }
   }
 
@@ -646,35 +679,51 @@ export function FloorPlanPage(): React.ReactElement {
         ))
       }
     } else {
-      // Chair — check if it should be reassigned to a closer table
+      // Chair — clamp to orbit, optionally reassign to nearest table
       const chairId = dragging.current.id
-      const newX = snap(cx - dragOffset.current.x)
-      const newY = snap(cy - dragOffset.current.y)
-      const chair = chairs.find((c) => c.id === chairId)
+      const chair   = chairs.find((c) => c.id === chairId)
       if (chair) {
-        // Find closest table centre
-        let closest: DiningTable | null = null
-        let closestDist = Infinity
-        for (const t of tables) {
-          const tcx = (t.x ?? 0) + (t.w ?? DEFAULT_W) / 2
-          const tcy = (t.y ?? 0) + (t.h ?? DEFAULT_H) / 2
-          const dist = Math.hypot(newX - tcx, newY - tcy)
-          if (dist < closestDist) { closestDist = dist; closest = t }
+        let rawX = snap(cx - dragOffset.current.x)
+        let rawY = snap(cy - dragOffset.current.y)
+
+        // If the user actually dragged (not just clicked), find closest table
+        let newTableId = chair.tableId
+        if (dragMoved.current) {
+          let closest: DiningTable | null = null
+          let closestDist = Infinity
+          for (const t of tables) {
+            const tcx = (t.x ?? 0) + (t.w ?? DEFAULT_W) / 2
+            const tcy = (t.y ?? 0) + (t.h ?? DEFAULT_H) / 2
+            const dist = Math.hypot(rawX - tcx, rawY - tcy)
+            if (dist < closestDist) { closestDist = dist; closest = t }
+          }
+          if (closest && closestDist < SNAP_ASSIGN + (closest.w ?? DEFAULT_W) / 2) {
+            newTableId = closest.id
+          }
         }
-        const newTableId = (closest && closestDist < SNAP_ASSIGN + (closest.w ?? DEFAULT_W) / 2)
-          ? closest.id
-          : chair.tableId
+
+        // Clamp to orbit of the (possibly new) table
+        const ownerTable = tables.find((t) => t.id === newTableId)
+        if (ownerTable) {
+          const tcx = (ownerTable.x ?? 0) + (ownerTable.w ?? DEFAULT_W) / 2
+          const tcy = (ownerTable.y ?? 0) + (ownerTable.h ?? DEFAULT_H) / 2
+          const orbitR = Math.max(ownerTable.w ?? DEFAULT_W, ownerTable.h ?? DEFAULT_H) / 2 + MAX_ORBIT_R
+          const clamped = clampToOrbit(rawX, rawY, tcx, tcy, orbitR)
+          rawX = clamped.x
+          rawY = clamped.y
+        }
 
         setChairs((prev) => prev.map((c) =>
-          c.id === chairId ? { ...c, x: newX, y: newY, tableId: newTableId } : c
+          c.id === chairId ? { ...c, x: rawX, y: rawY, tableId: newTableId } : c
         ))
       }
     }
 
     dragNodeRef.current.style.zIndex = ''
     dragNodeRef.current.style.cursor = 'grab'
-    dragging.current = null
+    dragging.current  = null
     dragNodeRef.current = null
+    dragMoved.current = false
   }
 
   // ── Canvas pointer down (for wall drawing) ─────────────────────────────
@@ -1064,8 +1113,11 @@ export function FloorPlanPage(): React.ReactElement {
                     isSelected={selectedTableId === t.id}
                     onPointerDown={handleTablePointerDown}
                     onClick={(id) => {
-                      setSelectedTableId((p) => p === id ? null : id)
-                      setSelectedChairId(null)
+                      // Only act if this was a pure click (no drag movement)
+                      if (!dragMoved.current) {
+                        setSelectedTableId(id)
+                        setSelectedChairId(null)
+                      }
                     }}
                   />
                 ))}
@@ -1079,8 +1131,10 @@ export function FloorPlanPage(): React.ReactElement {
                     isSelected={selectedChairId === c.id}
                     onPointerDown={handleChairPointerDown}
                     onClick={(id) => {
-                      setSelectedChairId((p) => p === id ? null : id)
-                      setSelectedTableId(null)
+                      if (!dragMoved.current) {
+                        setSelectedChairId(id)
+                        setSelectedTableId(null)
+                      }
                     }}
                   />
                 ))}

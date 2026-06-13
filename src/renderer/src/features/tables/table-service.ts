@@ -23,6 +23,7 @@ export async function saveFloor(input: Partial<Floor> & Pick<Floor, 'nameAr'>): 
     width: input.width ?? 1200,
     height: input.height ?? 800,
     bgColor: input.bgColor,
+    walls: input.walls,          // ← preserve wall segments
     sortOrder: input.sortOrder ?? 0,
     active: input.active ?? true,
     createdAt: input.createdAt ?? now,
@@ -66,6 +67,7 @@ export async function saveDiningTable(
     h: input.h ?? 90,
     shape: input.shape ?? 'rect',
     seats: input.seats ?? 4,
+    chairPositions: input.chairPositions,   // ← preserve per-chair positions
     rotation: input.rotation ?? 0,
     createdAt: input.createdAt ?? now,
     updatedAt: now
