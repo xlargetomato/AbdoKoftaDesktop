@@ -4,7 +4,8 @@ import { orderReference } from '@shared/services/order-reference'
 export function buildReceiptHtml(
   order: Order,
   items: OrderItem[],
-  settings: AppSettings
+  settings: AppSettings,
+  options?: { isCopy?: boolean; label?: string }
 ): string {
   const cur = settings.currencySymbol
 
@@ -84,6 +85,7 @@ export function buildReceiptHtml(
 <body>
   <h1>${escapeHtml(settings.restaurantNameAr)}</h1>
   ${settings.phoneNumber ? `<p class="sub">${escapeHtml(settings.phoneNumber)}</p>` : ''}
+  ${options?.isCopy ? `<p style="text-align:center;font-weight:900;border:2px solid #000;padding:2px 8px;margin:4px auto;display:inline-block">${escapeHtml(options.label ?? '— نسخة —')}</p>` : ''}
   <hr/>
   <div class="order-type">${escapeHtml(orderTypeLabel(order))}</div>
   <p style="margin:4px 0"><strong>طلب رقم:</strong> ${escapeHtml(orderReference(order))}</p>
@@ -125,9 +127,10 @@ function escapeHtml(s: string): string {
 export async function printReceipt(
   order: Order,
   items: OrderItem[],
-  settings: AppSettings
+  settings: AppSettings,
+  options?: { isCopy?: boolean; label?: string }
 ): Promise<boolean> {
-  const html = buildReceiptHtml(order, items, settings)
+  const html = buildReceiptHtml(order, items, settings, options)
   if (window.electronAPI?.printReceipt) {
     return window.electronAPI.printReceipt(html)
   }

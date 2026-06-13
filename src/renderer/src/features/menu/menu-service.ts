@@ -88,6 +88,9 @@ export async function updateMenuItem(
       | 'nameAr'
       | 'price'
       | 'categoryId'
+      | 'itemType'
+      | 'productType'
+      | 'linkedIngredientId'
       | 'sizeOptions'
       | 'attachments'
       | 'isWeighted'
@@ -119,6 +122,9 @@ export async function createMenuItemWithRecipe(params: {
   nameAr: string
   descriptionAr?: string
   price: number
+  itemType?: MenuItem['itemType']
+  productType?: MenuItem['productType']
+  linkedIngredientId?: string
   sizeOptions?: MenuItem['sizeOptions']
   attachments?: MenuItem['attachments']
   isWeighted?: boolean
@@ -149,6 +155,9 @@ export async function createMenuItemWithRecipe(params: {
     nameAr: params.nameAr,
     descriptionAr: params.descriptionAr,
     price: params.price,
+    itemType: params.itemType ?? 'product',
+    productType: params.productType,
+    linkedIngredientId: params.linkedIngredientId,
     sizeOptions: params.sizeOptions,
     attachments: params.attachments,
     isWeighted: params.isWeighted,

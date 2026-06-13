@@ -113,6 +113,19 @@ export async function ensureOpenShift(params: {
     updatedAt: now
   }
   await cacheDocs(COLLECTIONS.shifts, [shift])
+
+  // Audit
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'shift_opened',
+      actorId: params.cashierId,
+      actorName: params.cashierName,
+      targetId: shift.id,
+      targetType: 'shift',
+      detailAr: `فتح شيفت — افتتاح نقدي: ${params.openingCash?.toFixed(2) ?? '—'}`
+    })
+  )
+
   return shift
 }
 
@@ -125,6 +138,18 @@ export async function closeShift(shiftId: string, closedBy: string, closingCash?
     closingCash,
     updatedAt: now
   })
+
+  // Audit
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'shift_closed',
+      actorId: closedBy,
+      actorName: closedBy,
+      targetId: shiftId,
+      targetType: 'shift',
+      detailAr: `إغلاق شيفت — رصيد الإغلاق: ${closingCash?.toFixed(2) ?? '—'}`
+    })
+  )
 }
 
 export async function archiveShifts(shiftIds: string[]): Promise<void> {

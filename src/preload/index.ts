@@ -46,6 +46,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteCachedDocument: (collectionName: string, documentId: string): Promise<{ ok: boolean; deleted: boolean }> =>
     ipcRenderer.invoke('local-cache:delete-document', collectionName, documentId),
 
+  // Atomic batch — all ops execute in one SQLite transaction
+  executeBatch: (operations: Array<{ collection: string; id: string; data: unknown; op: 'set' | 'delete' }>): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('local-cache:execute-batch', operations),
+
+  // Database backup & restore — REQ-8
+  backupDatabase: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('local-store:backup'),
+  restoreDatabase: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('local-store:restore'),
+
+  // Materialized stock reads — REQ-11
+  getIngredientStocks: (): Promise<Array<{ ingredient_id: string; quantity: number }>> =>
+    ipcRenderer.invoke('local-store:get-stocks'),
+
   // Sync outbox
   outboxGetPending: (): Promise<unknown[]> =>
     ipcRenderer.invoke('outbox:get-pending'),

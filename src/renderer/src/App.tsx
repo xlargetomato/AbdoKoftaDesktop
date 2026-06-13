@@ -8,11 +8,13 @@ import { ProtectedRoute } from '@renderer/features/auth/ProtectedRoute'
 import { AppShell } from '@renderer/components/layout/AppShell'
 import { PageLoader } from '@renderer/components/PageLoader'
 import { UpdateNotification, useUpdaterBootstrap } from '@renderer/components/UpdateNotification'
+import { WhatsNewModal, useWhatsNewBootstrap } from '@renderer/components/WhatsNewModal'
 import { PinLockScreen } from '@renderer/components/PinLockScreen'
 import { usePinBootstrap } from '@renderer/features/auth/use-pin-bootstrap'
 import { applyThemeColor } from '@renderer/features/theme/theme-store'
 import { getSettings } from '@renderer/features/orders/order-service'
 import { CASHIER_NAV, MANAGER_NAV, SUPERVISOR_NAV } from '@renderer/config/navigation'
+import { ErrorBoundary } from '@renderer/components/ErrorBoundary'
 
 const LoginPage = lazy(() =>
   import('@renderer/features/auth/LoginPage').then((m) => ({ default: m.LoginPage }))
@@ -70,6 +72,12 @@ const CashierHistoryPage = lazy(() =>
   }))
 )
 
+const AuditLogPage = lazy(() =>
+  import('@renderer/features/manager/AuditLogPage').then((m) => ({
+    default: m.AuditLogPage
+  }))
+)
+
 function CashierLayout(): React.ReactElement {
   return (
     <AppShell nav={CASHIER_NAV}>
@@ -104,13 +112,18 @@ function RootRedirect(): React.ReactElement {
 }
 
 function LazyPage({ children }: { children: React.ReactNode }): React.ReactElement {
-  return <Suspense fallback={<PageLoader />}>{children}</Suspense>
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>{children}</Suspense>
+    </ErrorBoundary>
+  )
 }
 
 export default function App(): React.ReactElement {
   useAuthBootstrap()
   useSyncListener()
   useUpdaterBootstrap()
+  useWhatsNewBootstrap()
   usePinBootstrap()
 
   useEffect(() => {
@@ -123,6 +136,7 @@ export default function App(): React.ReactElement {
     <HashRouter>
       <PinLockScreen />
       <UpdateNotification />
+      <WhatsNewModal />
       <SyncProgressNotification />
       <Routes>
         <Route
@@ -226,6 +240,14 @@ export default function App(): React.ReactElement {
               element={
                 <LazyPage>
                   <CashierHistoryPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="/manager/audit"
+              element={
+                <LazyPage>
+                  <AuditLogPage />
                 </LazyPage>
               }
             />

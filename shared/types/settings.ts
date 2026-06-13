@@ -12,5 +12,13 @@ export interface AppSettings {
   taxRate?: number
   /** Default delivery fee added to delivery orders */
   defaultDeliveryFee?: number
+  /**
+   * Maximum discount % a cashier can apply without manager override.
+   * undefined or 100 means no limit.
+   * REQ-6: Discount limits per role.
+   */
+  maxCashierDiscountPct?: number
+  /** User-configurable keyboard shortcuts: action id → chord string e.g. "ctrl+tab" */
+  keyboardShortcuts?: Record<string, string>
   updatedAt: number
 }

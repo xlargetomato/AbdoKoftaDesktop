@@ -121,14 +121,21 @@ export async function loginAndLoadUser(username: string, password: string): Prom
     throw new Error('الحساب غير نشط')
   }
   writeSession(user.id)
+  // Audit: login
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({ action: 'login', actorId: user.id, actorName: user.displayName, detailAr: `تسجيل دخول: ${user.displayName}` })
+  )
   return user
 }
 
 /** Logout — clear local session only */
-export async function logoutUser(): Promise<void> {
+export async function logoutUser(user?: { id: string; displayName: string }): Promise<void> {
+  if (user) {
+    void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+      logAudit({ action: 'logout', actorId: user.id, actorName: user.displayName, detailAr: `تسجيل خروج: ${user.displayName}` })
+    )
+  }
   clearSession()
-  // Background: sign out of Firebase Auth too (fire-and-forget, no dynamic import needed)
-  // Firebase Auth will expire naturally on the server side
 }
 
 /** Create a new manager account (first-time setup) */
@@ -220,6 +227,18 @@ export async function createAccount(
   await cacheDocs(COLLECTIONS.users, [user])
   await storeLocalCredential(user, data.password)
 
+  // Audit: account created
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'account_created',
+      actorId: _createdByManagerId,
+      actorName: 'مدير',
+      targetId: user.id,
+      targetType: 'user',
+      detailAr: `إنشاء حساب جديد: ${user.displayName} (${user.role})`
+    })
+  )
+
   // Background: create in Firebase Auth (fire-and-forget)
   void (async () => {
     try {
@@ -240,10 +259,20 @@ export async function createAccount(
 /** Backwards-compat alias */
 export const createCashierAccount = createAccount
 
-export async function updateUserActive(userId: string, active: boolean): Promise<void> {
+export async function updateUserActive(userId: string, active: boolean, actorId = 'system', actorName = 'النظام'): Promise<void> {
   const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
   if (!cached) return
   await cacheDocs(COLLECTIONS.users, [{ ...cached, active, updatedAt: Date.now() }])
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'account_deactivated',
+      actorId,
+      actorName,
+      targetId: userId,
+      targetType: 'user',
+      detailAr: `${active ? 'تفعيل' : 'تعطيل'} حساب: ${cached.displayName}`
+    })
+  )
 }
 
 export async function updateUserProfile(
@@ -290,10 +319,19 @@ export async function deleteAccount(userId: string, currentUserId: string): Prom
   const cached = await getCachedDoc<AppUser>(COLLECTIONS.users, userId)
   if (cached) {
     await cacheDocs(COLLECTIONS.users, [{ ...cached, active: false, updatedAt: Date.now() }])
+    void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+      logAudit({
+        action: 'account_deleted',
+        actorId: currentUserId,
+        actorName: 'مدير',
+        targetId: userId,
+        targetType: 'user',
+        detailAr: `حذف حساب: ${cached.displayName}`
+      })
+    )
   }
 
   writeAuthCache(readAuthCache().filter((e) => e.userId !== userId))
-
   void window.electronAPI.deleteAuthUser(userId).catch(() => {})
 }
 

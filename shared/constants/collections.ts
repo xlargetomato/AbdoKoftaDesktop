@@ -14,7 +14,10 @@ export const COLLECTIONS = {
   cashDrawerTransactions: 'cash_drawer_transactions',
   suppliers: 'suppliers',
   supplierTransactions: 'supplier_transactions',
-  settings: 'settings'
+  settings: 'settings',
+  auditLog: 'audit_log',
+  itemSizes: 'item_sizes',
+  itemAddons: 'item_addons'
 } as const
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS]

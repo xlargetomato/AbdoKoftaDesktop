@@ -79,6 +79,10 @@ import {
   countPendingOutbox,
   deleteCachedDocument,
   enqueueOutbox,
+  executeBatch,
+  backupDatabase,
+  restoreDatabase,
+  readIngredientStocks,
   getLocalStoreStatus,
   initLocalStore,
   markOutboxFailed,
@@ -123,6 +127,38 @@ app.whenReady().then(() => {
   ipcMain.handle('local-cache:delete-document', (_, collectionName: string, documentId: string) => {
     const deleted = deleteCachedDocument(collectionName, documentId)
     return { ok: true as const, deleted }
+  })
+
+  // SQLite atomic batch write — all ops in one transaction
+  ipcMain.handle('local-cache:execute-batch', (_, operations: Array<{ collection: string; id: string; data: unknown; op: 'set' | 'delete' }>) => {
+    return executeBatch(operations)
+  })
+
+  // Materialized stock reads — REQ-11
+  ipcMain.handle('local-store:get-stocks', () => readIngredientStocks())
+
+  // Database backup — copy SQLite file to user-chosen location
+  ipcMain.handle('local-store:backup', async () => {    const { dialog } = await import('electron')
+    const today = new Date().toISOString().slice(0, 10)
+    const result = await dialog.showSaveDialog({
+      title: 'حفظ نسخة احتياطية',
+      defaultPath: `shift-pos-backup-${today}.sqlite`,
+      filters: [{ name: 'SQLite Database', extensions: ['sqlite'] }]
+    })
+    if (result.canceled || !result.filePath) return { ok: false, error: 'تم الإلغاء' }
+    return backupDatabase(result.filePath)
+  })
+
+  // Database restore — pick a backup file and replace the current DB
+  ipcMain.handle('local-store:restore', async () => {
+    const { dialog } = await import('electron')
+    const result = await dialog.showOpenDialog({
+      title: 'اختيار ملف النسخة الاحتياطية',
+      filters: [{ name: 'SQLite Database', extensions: ['sqlite'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return { ok: false, error: 'تم الإلغاء' }
+    return restoreDatabase(result.filePaths[0]!)
   })
 
   // Sync outbox: read pending entries for Firebase background upload

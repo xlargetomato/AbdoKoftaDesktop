@@ -1,6 +1,7 @@
 /**
  * Order service — SQLite primary database.
  * Supports: discounts, VAT/tax, delivery info, split payment, order editing.
+ * All multi-table writes use dbBatch() for atomicity.
  */
 import type {
   CashDrawerTransaction,
@@ -29,6 +30,7 @@ import { SETTINGS_DOC_ID } from '@shared/schema/firestore-schema'
 import { RESTAURANT_NAME_AR } from '@shared/constants/branding'
 import type { AppSettings } from '@shared/types'
 import { cacheDocs, getCachedDoc, getCachedDocs } from '@renderer/lib/offline/sqlite-cache'
+import { dbBatch, type DbBatchOp } from '@renderer/lib/db/sqlite-db'
 import { generateId } from '@renderer/lib/utils/id'
 import { getRecipe } from '../menu/menu-service'
 import { ensureOpenShift } from '../shifts/shift-service'
@@ -67,6 +69,8 @@ export async function updateSettings(
       | 'autoLockMinutes'
       | 'taxRate'
       | 'defaultDeliveryFee'
+      | 'maxCashierDiscountPct'
+      | 'keyboardShortcuts'
     >
   >
 ): Promise<void> {
@@ -231,11 +235,29 @@ export async function completeOrder(params: {
     }
   }
 
-  await cacheDocs(COLLECTIONS.orders, [order])
-  await cacheDocs(COLLECTIONS.orderItems, orderItems)
-  if (payments.length) await cacheDocs(COLLECTIONS.payments, payments)
-  if (inventoryTransactions.length) await cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions)
-  if (drawerTransactions.length) await cacheDocs(COLLECTIONS.cashDrawerTransactions, drawerTransactions)
+  // ── Atomic write: all tables in one SQLite transaction ──────────────────
+  const batchOps: DbBatchOp[] = [
+    { collection: COLLECTIONS.orders, id: order.id, data: order, op: 'set' },
+    ...orderItems.map((oi) => ({ collection: COLLECTIONS.orderItems, id: oi.id, data: oi, op: 'set' as const })),
+    ...payments.map((p) => ({ collection: COLLECTIONS.payments, id: p.id, data: p, op: 'set' as const })),
+    ...inventoryTransactions.map((t) => ({ collection: COLLECTIONS.inventoryTransactions, id: t.id, data: t, op: 'set' as const })),
+    ...drawerTransactions.map((d) => ({ collection: COLLECTIONS.cashDrawerTransactions, id: d.id, data: d, op: 'set' as const }))
+  ]
+  await dbBatch(batchOps)
+
+  // Audit: log discount if one was applied
+  if (discountAmount > 0) {
+    void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+      logAudit({
+        action: 'discount_applied',
+        actorId: params.cashierId,
+        actorName: params.cashierName,
+        targetId: orderId,
+        targetType: 'order',
+        detailAr: `خصم ${params.discountType === 'percent' ? `${params.discountValue}%` : `${discountAmount.toFixed(2)} ثابت`} على طلب — إجمالي: ${total.toFixed(2)}`
+      })
+    )
+  }
 
   return order
 }
@@ -314,9 +336,12 @@ export async function markOrderPaid(params: {
     createdAt: now
   }))
 
-  await cacheDocs(COLLECTIONS.orders, [paidOrder])
-  await cacheDocs(COLLECTIONS.payments, payments)
-  await cacheDocs(COLLECTIONS.cashDrawerTransactions, drawerTransactions)
+  // ── Atomic write ────────────────────────────────────────────────────────
+  await dbBatch([
+    { collection: COLLECTIONS.orders, id: paidOrder.id, data: paidOrder, op: 'set' },
+    ...payments.map((p) => ({ collection: COLLECTIONS.payments, id: p.id, data: p, op: 'set' as const })),
+    ...drawerTransactions.map((d) => ({ collection: COLLECTIONS.cashDrawerTransactions, id: d.id, data: d, op: 'set' as const }))
+  ])
   return paidOrder
 }
 
@@ -390,12 +415,18 @@ export async function editOrderItems(params: {
     params.orderId, newItems, params.cashierId, now, order.shiftId
   )
 
-  // Remove old items (mark them as replaced by writing updated list without old ones)
-  const remainingItems = allItems.filter((i) => i.orderId !== params.orderId)
-  await cacheDocs(COLLECTIONS.orders, [updatedOrder])
-  await cacheDocs(COLLECTIONS.orderItems, [...remainingItems, ...newItems])
-  if (reversals.length) await cacheDocs(COLLECTIONS.inventoryTransactions, reversals)
-  if (newInventory.length) await cacheDocs(COLLECTIONS.inventoryTransactions, newInventory)
+  // Delete old order items then write new ones — all atomic
+  const batchOps: DbBatchOp[] = [
+    { collection: COLLECTIONS.orders, id: updatedOrder.id, data: updatedOrder, op: 'set' },
+    // delete old items
+    ...oldItems.map((oi) => ({ collection: COLLECTIONS.orderItems, id: oi.id, data: { id: oi.id }, op: 'delete' as const })),
+    // write new items
+    ...newItems.map((oi) => ({ collection: COLLECTIONS.orderItems, id: oi.id, data: oi, op: 'set' as const })),
+    // inventory reversals and new deductions
+    ...reversals.map((t) => ({ collection: COLLECTIONS.inventoryTransactions, id: t.id, data: t, op: 'set' as const })),
+    ...newInventory.map((t) => ({ collection: COLLECTIONS.inventoryTransactions, id: t.id, data: t, op: 'set' as const }))
+  ]
+  await dbBatch(batchOps)
 
   return updatedOrder
 }
@@ -439,13 +470,30 @@ export async function cancelOrder(params: {
       }
     : null
 
-  await cacheDocs(COLLECTIONS.orders, [cancelledOrder])
-  if (drawerTransaction) await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
-
+  // ── Atomic write ────────────────────────────────────────────────────────
+  const cancelOps: DbBatchOp[] = [
+    { collection: COLLECTIONS.orders, id: cancelledOrder.id, data: cancelledOrder, op: 'set' }
+  ]
+  if (drawerTransaction) {
+    cancelOps.push({ collection: COLLECTIONS.cashDrawerTransactions, id: drawerTransaction.id, data: drawerTransaction, op: 'set' })
+  }
   if (params.inventoryMode === 'return') {
     const reversals = await buildInventoryReversals(order.id, params.cancelledBy, now)
-    if (reversals.length) await cacheDocs(COLLECTIONS.inventoryTransactions, reversals)
+    reversals.forEach((r) => cancelOps.push({ collection: COLLECTIONS.inventoryTransactions, id: r.id, data: r, op: 'set' }))
   }
+  await dbBatch(cancelOps)
+
+  // Audit
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'order_cancelled',
+      actorId: params.cancelledBy,
+      actorName: params.cancelledBy,
+      targetId: order.id,
+      targetType: 'order',
+      detailAr: `إلغاء طلب #${order.orderCode ?? order.orderNumber} — إجمالي: ${order.total.toFixed(2)}${params.reasonAr ? ` — السبب: ${params.reasonAr}` : ''}`
+    })
+  )
 }
 
 async function buildInventoryReversals(
@@ -516,4 +564,162 @@ export async function unarchiveOrders(orderIds: string[]): Promise<void> {
     .filter((o) => orderIds.includes(o.id))
     .map((o) => ({ ...o, archived: false, updatedAt: Date.now() }))
   if (updates.length) await cacheDocs(COLLECTIONS.orders, updates)
+}
+
+// ---------------------------------------------------------------------------
+// Refund order — REQ-4
+// ---------------------------------------------------------------------------
+
+export interface RefundLine {
+  orderItemId: string
+  menuItemId: string
+  nameAr: string
+  unitPrice: number
+  quantity: number
+  lineTotal: number
+}
+
+export interface RefundResult {
+  refundOrder: Order
+  refundAmount: number
+}
+
+/**
+ * Process a full or partial refund for a completed paid order.
+ * Creates a refund order record, a cash_out drawer transaction,
+ * and inventory sale_reversal transactions for restocked items.
+ */
+export async function refundOrder(params: {
+  originalOrderId: string
+  cashierId: string
+  cashierName: string
+  lines: RefundLine[]
+  reasonAr: string
+}): Promise<RefundResult> {
+  if (!params.lines.length) throw new Error('اختر صنفًا واحدًا على الأقل للاسترداد')
+  if (!params.reasonAr.trim()) throw new Error('سبب الاسترداد مطلوب')
+
+  const original = await getCachedDoc<Order>(COLLECTIONS.orders, params.originalOrderId)
+  if (!original) throw new Error('الطلب الأصلي غير موجود')
+  if (original.status === 'cancelled') throw new Error('لا يمكن استرداد طلب ملغي')
+  if (original.paymentStatus === 'unpaid') throw new Error('لا يمكن استرداد طلب غير مدفوع')
+
+  // Calculate refund amount proportionally (preserving discount/tax ratio)
+  const originalSubtotal = original.subtotal > 0 ? original.subtotal : 1
+  const refundSubtotal = params.lines.reduce((s, l) => s + l.lineTotal, 0)
+  const ratio = refundSubtotal / originalSubtotal
+
+  const refundDiscountAmt = Math.round((original.discountAmount ?? 0) * ratio * 100) / 100
+  const refundTaxAmt = Math.round((original.taxAmount ?? 0) * ratio * 100) / 100
+  const refundAmount = Math.round((refundSubtotal - refundDiscountAmt + refundTaxAmt) * 100) / 100
+
+  const now = Date.now()
+  const refundId = generateId()
+
+  // Mark original order as refunded
+  const updatedOriginal: Order = {
+    ...original,
+    cancelReasonAr: params.reasonAr,
+    updatedAt: now
+  }
+
+  // Create refund order record (negative total)
+  const refundOrder: Order = {
+    id: refundId,
+    orderNumber: 0,
+    orderCode: `RFD-${original.orderCode ?? original.orderNumber}`,
+    status: 'cancelled',
+    orderType: original.orderType,
+    paymentStatus: 'paid',
+    shiftId: original.shiftId,
+    cashierId: params.cashierId,
+    cashierName: params.cashierName,
+    cashierCode: original.cashierCode,
+    subtotal: -refundSubtotal,
+    discountAmount: refundDiscountAmt > 0 ? -refundDiscountAmt : undefined,
+    taxAmount: refundTaxAmt > 0 ? -refundTaxAmt : undefined,
+    total: -refundAmount,
+    noteAr: `استرداد من طلب #${original.orderCode ?? original.orderNumber}: ${params.reasonAr}`,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+    cancelledAt: now,
+    cancelledBy: params.cashierId,
+    cancelReasonAr: params.reasonAr
+  }
+
+  // Refund order items (negative quantities for receipt display)
+  const refundItems: OrderItem[] = params.lines.map((l) => ({
+    id: generateId(),
+    orderId: refundId,
+    menuItemId: l.menuItemId,
+    nameAr: l.nameAr,
+    unitPrice: l.unitPrice,
+    quantity: l.quantity,
+    lineTotal: -l.lineTotal
+  }))
+
+  // Cash out — money leaves the drawer
+  const drawerTx: CashDrawerTransaction = {
+    id: generateId(),
+    type: 'cash_out',
+    amount: -refundAmount,
+    shiftId: original.shiftId,
+    orderId: refundId,
+    noteAr: `استرداد طلب #${original.orderCode ?? original.orderNumber}: ${params.reasonAr}`,
+    createdBy: params.cashierId,
+    createdAt: now
+  }
+
+  // Inventory: restock refunded items via sale_reversal
+  const inventoryReversals: InventoryTransaction[] = []
+  const allInventoryTxs = await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions)
+  for (const line of params.lines) {
+    const saleTxs = allInventoryTxs.filter(
+      (tx) => tx.referenceId === params.originalOrderId && tx.type === 'sale'
+    )
+    // Find the matching inventory deduction (proportional to refund qty)
+    for (const tx of saleTxs) {
+      const originalItem = (await getCachedDocs<OrderItem>(COLLECTIONS.orderItems))
+        .find((oi) => oi.orderId === params.originalOrderId && oi.menuItemId === tx.ingredientId)
+      if (!originalItem) continue
+      const qtyRatio = line.quantity / originalItem.quantity
+      inventoryReversals.push({
+        id: generateId(),
+        ingredientId: tx.ingredientId,
+        type: 'sale_reversal',
+        quantity: Math.abs(tx.quantity) * qtyRatio,
+        unit: tx.unit,
+        referenceType: 'order',
+        referenceId: refundId,
+        shiftId: original.shiftId,
+        noteAr: `استرداد مخزون: ${params.reasonAr}`,
+        createdBy: params.cashierId,
+        createdAt: now
+      })
+    }
+  }
+
+  // Atomic write
+  await dbBatch([
+    { collection: COLLECTIONS.orders, id: updatedOriginal.id, data: updatedOriginal, op: 'set' },
+    { collection: COLLECTIONS.orders, id: refundOrder.id, data: refundOrder, op: 'set' },
+    ...refundItems.map((ri) => ({ collection: COLLECTIONS.orderItems, id: ri.id, data: ri, op: 'set' as const })),
+    { collection: COLLECTIONS.cashDrawerTransactions, id: drawerTx.id, data: drawerTx, op: 'set' },
+    ...inventoryReversals.map((r) => ({ collection: COLLECTIONS.inventoryTransactions, id: r.id, data: r, op: 'set' as const }))
+  ])
+
+  // Audit
+  void import('@renderer/features/audit/audit-service').then(({ logAudit }) =>
+    logAudit({
+      action: 'order_refunded',
+      actorId: params.cashierId,
+      actorName: params.cashierName,
+      targetId: params.originalOrderId,
+      targetType: 'order',
+      detailAr: `استرداد ${refundAmount.toFixed(2)} من طلب #${original.orderCode ?? original.orderNumber} — ${params.reasonAr}`
+    })
+  )
+
+  return { refundOrder, refundAmount }
 }

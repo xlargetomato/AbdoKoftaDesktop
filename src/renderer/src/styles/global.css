@@ -392,6 +392,8 @@ textarea {
   border-left: 3px solid var(--color-primary);
   min-height: 0;
   container-type: inline-size;
+  transition: width 200ms var(--ease-out);
+  overflow: hidden;
 }
 
 .app-sidebar__brand {
@@ -563,6 +565,146 @@ textarea {
     background: rgba(255, 255, 255, 0.1);
     border-color: #fff;
   }
+}
+
+/* ── Sidebar brand-row (toggle button + brand text) ──────────────────────── */
+
+.app-sidebar__brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  min-height: 52px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 100%);
+  border-right: 3px solid var(--color-primary);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-sidebar__brand-text {
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: 0.01em;
+  color: #fff;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  flex: 1;
+}
+
+/* Toggle button (visible only in split mode) */
+.app-sidebar__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .app-sidebar__toggle:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+  }
+}
+
+/* ── Collapsed sidebar ────────────────────────────────────────────────────── */
+
+.app-sidebar--collapsed {
+  width: 52px;
+}
+
+/* In collapsed state, center the toggle button */
+.app-sidebar--collapsed .app-sidebar__brand-row {
+  justify-content: center;
+  padding: 14px 8px;
+  border-right: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Nav items — icon only when collapsed */
+.app-sidebar--collapsed .app-sidebar__nav {
+  padding: 8px 6px;
+  gap: 4px;
+}
+
+.app-sidebar--collapsed .app-sidebar__link {
+  padding: 10px 0;
+  justify-content: center;
+  align-items: center;
+}
+
+.app-sidebar--collapsed .app-sidebar__link-row {
+  justify-content: center;
+  gap: 0;
+}
+
+.app-sidebar--collapsed .app-sidebar__link-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Footer — centered icons when collapsed */
+.app-sidebar--collapsed .app-sidebar__footer {
+  padding: 10px 6px;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Icon-only buttons in collapsed footer */
+.app-sidebar__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  font-size: 1.1rem;
+  transition:
+    background var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .app-sidebar__icon-btn:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+  }
+}
+
+/* Badge visible in collapsed state — floats above the icon */
+.app-sidebar__badge--collapsed {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 16px;
+  height: 16px;
+  font-size: 0.65rem;
+  padding: 0 3px;
+  z-index: 1;
+}
+
+/* Make sure badge-carrying links are positioned */
+.app-sidebar--collapsed .app-sidebar__link {
+  position: relative;
 }
 
 .app-shell__content {
@@ -818,6 +960,37 @@ textarea {
   height: 40px;
   background: rgba(255,255,255,0.3);
   border-radius: 1px;
+}
+
+/* ── Tab drag-and-drop ───────────────────────────────────────────────────── */
+
+/* Tab being dragged — fade it out in place */
+.tab--dragging {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Thin vertical drop-indicator line between tabs */
+.tab-drop-indicator {
+  flex-shrink: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--color-primary);
+  align-self: stretch;
+  margin: 4px 0;
+  pointer-events: none;
+  animation: drop-indicator-in 80ms var(--ease-out);
+}
+
+@keyframes drop-indicator-in {
+  from { opacity: 0; transform: scaleY(0.6); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+/* Tab bar receiving a cross-pane drop — highlight border */
+.tab-bar--drop-target {
+  border-bottom-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, #1a1a1a);
 }
 
 /* ── Tab context menu ─────────────────────────────────────────────────────── */
@@ -2164,8 +2337,8 @@ textarea {
 
 .version-popup__close {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 1px;
+  right: 6px;
   width: 24px;
   height: 24px;
   display: flex;
@@ -4073,4 +4246,330 @@ select.inline-edit-input {
   padding: 12px 0 8px;
   border-top: 1px dashed var(--color-border-light);
   margin-top: 8px;
+}
+
+/* ── What's New modal ───────────────────────────────────────────────────── */
+
+.whats-new__overlay {
+  z-index: 200;
+}
+
+.whats-new__modal {
+  max-width: 560px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.whats-new__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 2px solid var(--color-border);
+  background: var(--color-primary);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.whats-new__header-text {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.whats-new__header-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
+.whats-new__title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.whats-new__subtitle {
+  margin: 3px 0 0;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
+}
+
+.whats-new__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+@media (hover: hover) {
+  .whats-new__close:hover {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: #fff;
+  }
+}
+
+.whats-new__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.whats-new__version-block {
+  margin-bottom: 20px;
+}
+
+.whats-new__version-block:last-child {
+  margin-bottom: 0;
+}
+
+.whats-new__version-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.whats-new__version-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.whats-new__version-date {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.whats-new__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.whats-new__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.whats-new__bullet-icon {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+}
+
+.whats-new__bullet-icon--new     { color: var(--color-primary); }
+.whats-new__bullet-icon--fix     { color: var(--color-danger); }
+.whats-new__bullet-icon--improve { color: #d97706; }
+
+.whats-new__type-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  border: 1px solid;
+  border-radius: 2px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.whats-new__type-badge--new {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.whats-new__type-badge--fix {
+  background: #fef2f2;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.whats-new__type-badge--improve {
+  background: #fffbeb;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+.whats-new__item-text {
+  flex: 1;
+  color: var(--color-text);
+}
+
+.whats-new__empty {
+  color: var(--color-muted);
+  text-align: center;
+  padding: 20px 0;
+}
+
+.whats-new__footer {
+  padding: 12px 20px 16px;
+  border-top: 2px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* ── Item type badges (ItemsPage table) ──────────────────────────────────── */
+
+.items-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border-radius: 3px;
+  border: 1.5px solid transparent;
+}
+
+/* product → teal */
+.items-type-badge--product {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+
+/* service → purple-ish */
+.items-type-badge--service {
+  background: #f3e8ff;
+  border-color: #a855f7;
+  color: #7e22ce;
+}
+
+/* raw_material → amber */
+.items-type-badge--raw_material {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+/* ── Settings page — tabbed layout ──────────────────────────────────────── */
+
+.settings-tab-content {
+  max-width: 860px;
+}
+
+/* ── Keyboard shortcuts tab ──────────────────────────────────────────────── */
+
+.shortcuts-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.shortcuts-tab__hint {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  background: var(--color-primary-soft);
+  border-right: 3px solid var(--color-primary);
+}
+
+.shortcuts-table {
+  table-layout: fixed;
+}
+
+.shortcuts-table th:nth-child(1) { width: 40%; }
+.shortcuts-table th:nth-child(2) { width: 30%; }
+.shortcuts-table th:nth-child(3) { width: 30%; }
+
+/* Chord display / record button */
+.shortcut-chord-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 140px;
+  min-height: 34px;
+  padding: 4px 12px;
+  background: var(--color-bg);
+  border: 2px solid var(--color-border);
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition:
+    background var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .shortcut-chord-btn:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-soft);
+  }
+}
+
+/* Pulsing red ring while recording */
+.shortcut-chord-btn--recording {
+  border-color: var(--color-danger);
+  background: #fef2f2;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.18);
+  animation: shortcut-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes shortcut-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.18); }
+  50%       { box-shadow: 0 0 0 6px rgba(185, 28, 28, 0.08); }
+}
+
+.shortcut-chord-btn__recording-label {
+  color: var(--color-danger);
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  animation: shortcut-blink 800ms step-start infinite;
+}
+
+@keyframes shortcut-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* Conflict row highlight */
+.shortcut-row--conflict td {
+  background: #fef3c7;
+}
+
+.shortcut-conflict-msg {
+  font-size: 0.75rem;
+  color: #92400e;
+  font-weight: 700;
+  margin-top: 4px;
 }

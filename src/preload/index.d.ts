@@ -57,6 +57,16 @@ export interface ElectronAPI {
   getCachedDocument: (collectionName: string, documentId: string) => Promise<unknown | null>
   deleteCachedDocument: (collectionName: string, documentId: string) => Promise<{ ok: boolean; deleted: boolean }>
 
+  // Atomic batch — all ops in one SQLite transaction, also enqueues to outbox
+  executeBatch: (operations: Array<{ collection: string; id: string; data: unknown; op: 'set' | 'delete' }>) => Promise<{ ok: boolean; error?: string }>
+
+  // Database backup & restore — REQ-8
+  backupDatabase: () => Promise<{ ok: boolean; error?: string }>
+  restoreDatabase: () => Promise<{ ok: boolean; error?: string }>
+
+  // Materialized stock reads — REQ-11
+  getIngredientStocks: () => Promise<Array<{ ingredient_id: string; quantity: number }>>
+
   // Sync outbox
   outboxGetPending: () => Promise<unknown[]>
   outboxEnqueue: (entityType: string, entityId: string, operation: 'set' | 'delete', payload: unknown) => Promise<{ ok: boolean }>

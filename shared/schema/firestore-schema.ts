@@ -17,7 +17,9 @@ import type {
   Shift,
   CashDrawerTransaction,
   Supplier,
-  SupplierTransaction
+  SupplierTransaction,
+  ItemSize,
+  ItemAddon
 } from '../types'
 
 export type FirestoreDoc<T> = T
@@ -38,6 +40,8 @@ export interface FirestoreSchema {
   suppliers: FirestoreDoc<Supplier>
   supplier_transactions: FirestoreDoc<SupplierTransaction>
   settings: FirestoreDoc<AppSettings>
+  item_sizes: FirestoreDoc<ItemSize>
+  item_addons: FirestoreDoc<ItemAddon>
 }
 
 /** Default settings document id */

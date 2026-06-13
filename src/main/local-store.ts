@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-
+import { copyFileSync, existsSync } from 'node:fs'
 const require = createRequire(import.meta.url)
 
 type DatabaseSync = {
@@ -61,6 +61,16 @@ function openDatabase(): DatabaseSync {
       payload_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (collection_name, document_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cached_docs_collection
+      ON cached_documents(collection_name, updated_at DESC);
+
+    -- REQ-11: Materialized stock balances — O(1) reads instead of O(n) transaction scans
+    CREATE TABLE IF NOT EXISTS ingredient_stock (
+      ingredient_id TEXT PRIMARY KEY,
+      quantity REAL NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
     );
   `)
   return db
@@ -232,6 +242,158 @@ export function countPendingOutbox(): number {
   ).get() as { count?: number } | undefined
   return Number(row?.count ?? 0)
 }
+
+// ---------------------------------------------------------------------------
+// Materialized stock reads — REQ-11
+// ---------------------------------------------------------------------------
+
+export interface StockRow {
+  ingredient_id: string
+  quantity: number
+}
+
+/**
+ * Read materialized stock balances directly from ingredient_stock table.
+ * O(1) per ingredient — does not scan inventory_transactions.
+ */
+export function readIngredientStocks(): StockRow[] {
+  const database = openDatabase()
+  return database.prepare('SELECT ingredient_id, quantity FROM ingredient_stock').all() as StockRow[]
+}
+
+/**
+ * Read the materialized stock for a single ingredient.
+ */
+export function readIngredientStock(ingredientId: string): number {
+  const database = openDatabase()
+  const row = database.prepare(
+    'SELECT quantity FROM ingredient_stock WHERE ingredient_id = ?'
+  ).get(ingredientId) as { quantity?: number } | undefined
+  return Number(row?.quantity ?? 0)
+}
+
+// ---------------------------------------------------------------------------
+// Atomic batch write — executes multiple document upserts in a single
+// SQLite transaction so partial failures are impossible.
+// ---------------------------------------------------------------------------
+
+export interface BatchOperation {
+  collection: string
+  id: string
+  data: unknown
+  op: 'set' | 'delete'
+}
+
+/**
+ * Execute an array of document operations atomically.
+ * All writes succeed together or all are rolled back.
+ * Also enqueues every operation in the outbox for Firebase sync.
+ */
+export function executeBatch(operations: BatchOperation[]): { ok: boolean; error?: string } {
+  if (!operations.length) return { ok: true }
+  const database = openDatabase()
+  const now = Date.now()
+
+  const upsertStmt = database.prepare(`
+    INSERT INTO cached_documents (collection_name, document_id, payload_json, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(collection_name, document_id)
+    DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+  `)
+
+  const deleteStmt = database.prepare(`
+    DELETE FROM cached_documents
+    WHERE collection_name = ? AND document_id = ?
+  `)
+
+  const outboxStmt = database.prepare(`
+    INSERT INTO sync_outbox (id, entity_type, entity_id, operation, payload_json, status, attempts, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      operation = excluded.operation,
+      payload_json = excluded.payload_json,
+      status = 'pending',
+      updated_at = excluded.updated_at
+  `)
+
+  // REQ-11: materialized stock upsert — keeps ingredient_stock in sync atomically
+  const stockUpsertStmt = database.prepare(`
+    INSERT INTO ingredient_stock (ingredient_id, quantity, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(ingredient_id)
+    DO UPDATE SET quantity = quantity + excluded.quantity, updated_at = excluded.updated_at
+  `)
+
+  try {
+    database.exec('BEGIN IMMEDIATE')
+    for (const op of operations) {
+      if (op.op === 'delete') {
+        deleteStmt.run(op.collection, op.id)
+      } else {
+        upsertStmt.run(op.collection, op.id, JSON.stringify(op.data), now)
+
+        // REQ-11: update materialized stock when an inventory transaction is saved
+        if (op.collection === 'inventory_transactions') {
+          const tx = op.data as { ingredientId?: string; quantity?: number }
+          if (tx.ingredientId && typeof tx.quantity === 'number') {
+            stockUpsertStmt.run(tx.ingredientId, tx.quantity, now)
+          }
+        }
+      }
+      const outboxId = `${op.collection}:${op.id}:${now}`
+      const payload = op.op === 'delete' ? JSON.stringify({ id: op.id }) : JSON.stringify(op.data)
+      outboxStmt.run(outboxId, op.collection, op.id, op.op, payload, now, now)
+    }
+    database.exec('COMMIT')
+    return { ok: true }
+  } catch (e) {
+    try { database.exec('ROLLBACK') } catch { /* ignore rollback error */ }
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Backup & Restore — REQ-8
+// ---------------------------------------------------------------------------
+
+/**
+ * Copy the live SQLite file to a destination path chosen by the user.
+ * We WAL-checkpoint first so the copy is consistent.
+ */
+export function backupDatabase(destinationPath: string): { ok: boolean; error?: string } {
+  try {
+    const database = openDatabase()
+    // Flush WAL to main DB file so the copy is consistent
+    try { database.exec('PRAGMA wal_checkpoint(TRUNCATE);') } catch { /* ignore */ }
+    copyFileSync(dbPath(), destinationPath)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * Replace the live SQLite file with a backup copy.
+ * The current DB connection is closed first so the file can be replaced.
+ * The app MUST restart after this call.
+ */
+export function restoreDatabase(sourcePath: string): { ok: boolean; error?: string } {
+  if (!existsSync(sourcePath)) {
+    return { ok: false, error: 'ملف النسخ الاحتياطي غير موجود' }
+  }
+  try {
+    // Close the connection so we can replace the file
+    db = null
+    copyFileSync(sourcePath, dbPath())
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * DEV ONLY — wipe all cached_documents and sync_outbox rows.
