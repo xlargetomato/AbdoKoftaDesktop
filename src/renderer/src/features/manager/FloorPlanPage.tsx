@@ -142,6 +142,7 @@ function WallLayer({
   onSelectWall,
   drawingWall,
   onWallPointerDown,
+  tool,
 }: {
   walls: WallSegment[]
   width: number
@@ -150,6 +151,7 @@ function WallLayer({
   onSelectWall: (id: string | null) => void
   drawingWall: WallSegment | null
   onWallPointerDown?: (e: React.PointerEvent<SVGLineElement>, id: string) => void
+  tool: ToolMode
 }): React.ReactElement {
   return (
     <svg
@@ -159,16 +161,33 @@ function WallLayer({
       }}
     >
       {walls.map((w) => (
-        <line
-          key={w.id}
-          x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
-          stroke={selectedWallId === w.id ? 'var(--color-primary)' : (w.color ?? WALL_COLOR)}
-          strokeWidth={(w.thickness ?? WALL_W) + (selectedWallId === w.id ? 4 : 0)}
-          strokeLinecap="round"
-          style={{ pointerEvents: 'visibleStroke', cursor: 'grab' }}
-          onPointerDown={onWallPointerDown ? (e) => onWallPointerDown(e, w.id) : undefined}
-          onClick={(e) => { e.stopPropagation(); onSelectWall(selectedWallId === w.id ? null : w.id) }}
-        />
+        <g key={w.id}>
+          {/* Fat invisible hit area — much easier to click than the thin visible line */}
+          <line
+            x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
+            stroke="transparent"
+            strokeWidth={Math.max((w.thickness ?? WALL_W) + 16, 22)}
+            strokeLinecap="round"
+            style={{ pointerEvents: 'visibleStroke', cursor: tool === 'select' ? 'grab' : 'crosshair' }}
+            onPointerDown={onWallPointerDown ? (e) => onWallPointerDown(e, w.id) : undefined}
+            onClick={(e) => { e.stopPropagation(); onSelectWall(selectedWallId === w.id ? null : w.id) }}
+          />
+          {/* Visible stroke — pointer events off so the hit area handles everything */}
+          <line
+            x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
+            stroke={selectedWallId === w.id ? 'var(--color-primary)' : (w.color ?? WALL_COLOR)}
+            strokeWidth={(w.thickness ?? WALL_W) + (selectedWallId === w.id ? 4 : 0)}
+            strokeLinecap="round"
+            style={{ pointerEvents: 'none' }}
+          />
+          {/* Selection handles at endpoints when selected */}
+          {selectedWallId === w.id && (
+            <>
+              <circle cx={w.x1} cy={w.y1} r={5} fill="var(--color-primary)" stroke="#fff" strokeWidth={1.5} style={{ pointerEvents: 'none' }} />
+              <circle cx={w.x2} cy={w.y2} r={5} fill="var(--color-primary)" stroke="#fff" strokeWidth={1.5} style={{ pointerEvents: 'none' }} />
+            </>
+          )}
+        </g>
       ))}
       {drawingWall && (
         <line
@@ -705,11 +724,12 @@ export function FloorPlanPage(): React.ReactElement {
     } else if (dragging.current.kind === 'wall') {
       // Wall drag — translate both endpoints by the delta from drag start
       if (!wallDragOrigin.current) return
+      const wallId = dragging.current.id   // capture before any async setState
       const dx = snap(cx - dragOffset.current.x)
       const dy = snap(cy - dragOffset.current.y)
       const origin = wallDragOrigin.current
       setWalls((prev) => prev.map((w) =>
-        w.id === dragging.current!.id
+        w.id === wallId
           ? { ...w, x1: origin.x1 + dx, y1: origin.y1 + dy, x2: origin.x2 + dx, y2: origin.y2 + dy }
           : w
       ))
@@ -1198,6 +1218,7 @@ export function FloorPlanPage(): React.ReactElement {
                   onSelectWall={(id) => { setSelectedWallId(id); setSelectedTableId(null); setSelectedChairId(null) }}
                   drawingWall={drawingWall}
                   onWallPointerDown={tool === 'select' ? handleWallPointerDown : undefined}
+                  tool={tool}
                 />
 
                 {/* Tables */}
