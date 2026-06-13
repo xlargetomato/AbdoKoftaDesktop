@@ -26,6 +26,7 @@ import {
   ensureOpenShift,
   getOpenShiftForCashier
 } from '@renderer/features/shifts/shift-service'
+import { FloorMapPicker } from './FloorMapPicker'
 
 // ── Local cart line type ──────────────────────────────────────────────────
 
@@ -1040,10 +1041,10 @@ export function PosPage(): React.ReactElement {
         />
       )}
 
-      {/* ── Table picker modal ── */}
+      {/* ── Table picker modal — visual floor map ── */}
       {tablePopupOpen && (
         <div className="modal-overlay" onClick={() => setTablePopupOpen(false)}>
-          <div className="modal table-select-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal fmp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="order-details__header">
               <h2 className="order-details__title">اختيار الترابيزة</h2>
               <button
@@ -1055,37 +1056,15 @@ export function PosPage(): React.ReactElement {
                 ✕
               </button>
             </div>
-            {groupedTables.length === 0 ? (
-              <p className="table-picker__empty">لا توجد ترابيزات مفعلة</p>
-            ) : (
-              <div className="table-category-list">
-                {groupedTables.map((group) => (
-                  <section key={group.category} className="table-category-group">
-                    <h3>{group.category}</h3>
-                    <div className="table-picker table-picker--modal">
-                      {group.tables.map((table) => {
-                        const occupied = occupiedTableIds.has(table.id)
-                        return (
-                          <button
-                            key={table.id}
-                            type="button"
-                            className={`table-picker__btn${selectedTableId === table.id ? ' table-picker__btn--active' : ''}${occupied ? ' table-picker__btn--occupied' : ''}`}
-                            onClick={() => {
-                              setSelectedTableId(table.id)
-                              setTablePopupOpen(false)
-                            }}
-                            title={occupied ? 'عليها طلب غير مدفوع' : undefined}
-                          >
-                            <strong>{table.nameAr}</strong>
-                            {occupied && <span>مشغولة</span>}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
+            <FloorMapPicker
+              tables={tables}
+              occupiedIds={occupiedTableIds}
+              selectedId={selectedTableId}
+              onSelect={(id) => {
+                setSelectedTableId(id)
+                setTablePopupOpen(false)
+              }}
+            />
           </div>
         </div>
       )}

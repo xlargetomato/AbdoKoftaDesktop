@@ -4984,3 +4984,273 @@ select.inline-edit-input {
   border-color: #fff !important;
   box-shadow: 0 0 0 3px var(--color-primary), 2px 2px 6px rgba(0,0,0,0.25) !important;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FloorMapPicker — POS visual table selector
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Modal — wider than the default modal to fit the floor canvas */
+.fmp-modal {
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fmp-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Floor tabs ── */
+.fmp-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 0 10px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.fmp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  background: var(--color-bg);
+  border: 2px solid var(--color-border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.fmp-tab--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.fmp-tab__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 9px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+/* ── Legend ── */
+.fmp-legend {
+  display: flex;
+  gap: 14px;
+  padding: 0 0 10px;
+  flex-shrink: 0;
+}
+
+.fmp-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.fmp-legend__item::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.fmp-legend__item--available::before { background: #15803d; }
+.fmp-legend__item--occupied::before  { background: #b91c1c; }
+.fmp-legend__item--selected::before  { background: #1d4ed8; }
+
+/* ── Canvas wrapper — scrollable, auto-scales ── */
+.fmp-floor-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #d0d4d9;
+  background-image: radial-gradient(circle, #b0b5bc 1px, transparent 1px);
+  background-size: 24px 24px;
+  padding: 16px;
+  min-height: 0;
+}
+
+.fmp-canvas {
+  background: #fff;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Chair dots ── */
+.fmp-chair {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.5);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+/* ── Table buttons ── */
+.fmp-table {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+  transition: filter var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .fmp-table:hover {
+    filter: brightness(1.12);
+    box-shadow: 0 0 0 3px #fff, 2px 2px 8px rgba(0,0,0,0.3);
+  }
+}
+
+.fmp-table--selected {
+  box-shadow: 0 0 0 3px #fff, 0 0 0 5px #1d4ed8 !important;
+}
+
+.fmp-table__label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  color: #fff;
+  text-align: center;
+  line-height: 1.2;
+  padding: 0 3px;
+  pointer-events: none;
+  user-select: none;
+  word-break: break-all;
+}
+
+.fmp-table__status {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  background: rgba(0,0,0,0.25);
+  border-radius: 2px;
+  padding: 1px 4px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Empty state ── */
+.fmp-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* ── Fallback grid (no floor layout) ── */
+.fmp-fallback {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+}
+
+.fmp-fallback__group {
+  border: 2px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.fmp-fallback__group-title {
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--color-border);
+  background: #f5f5f5;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.fmp-fallback__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.fmp-fallback__btn {
+  min-height: 60px;
+  padding: 8px 6px;
+  border: 2.5px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.fmp-fallback__btn strong {
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.fmp-fallback__btn span {
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.fmp-fallback__btn--available {
+  border-color: #15803d;
+}
+
+.fmp-fallback__btn--available strong {
+  color: #15803d;
+}
+
+.fmp-fallback__btn--occupied {
+  background: #fef2f2;
+  border-color: var(--color-danger);
+}
+
+.fmp-fallback__btn--occupied strong,
+.fmp-fallback__btn--occupied span {
+  color: var(--color-danger);
+}
+
+.fmp-fallback__btn--selected {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.fmp-fallback__btn--selected strong {
+  color: var(--color-primary-dark);
+}
+
+@media (hover: hover) {
+  .fmp-fallback__btn:hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+  }
+}
