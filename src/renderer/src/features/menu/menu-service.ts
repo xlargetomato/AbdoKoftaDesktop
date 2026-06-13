@@ -125,7 +125,7 @@ export async function createMenuItemWithRecipe(params: {
   weightedPriceOptions?: MenuItem['weightedPriceOptions']
   allowCustomWeight?: boolean
   customWeightUnitPrice?: number
-  lines: RecipeLine[]
+  lines: RecipeLine[]   // empty array = no inventory deduction
   sortOrder?: number
 }): Promise<{ item: MenuItem; recipe: Recipe }> {
   const now = Date.now()

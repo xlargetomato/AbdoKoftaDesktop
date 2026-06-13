@@ -35,7 +35,7 @@ export function SettingsPage(): React.ReactElement {
   const [tables, setTables] = useState<DiningTable[]>([])
 
   // ── Receipt ─────────────────────────────────────────────────────────────
-  const [receiptForm, setReceiptForm] = useState({ restaurantNameAr: '', currencySymbol: '', phoneNumber: '', receiptFooterAr: '' })
+  const [receiptForm, setReceiptForm] = useState({ restaurantNameAr: '', currencySymbol: '', phoneNumber: '', receiptFooterAr: '', taxRate: '', defaultDeliveryFee: '' })
   const [receiptSaving, setReceiptSaving] = useState(false)
   const [receiptMsg, setReceiptMsg] = useState<string | null>(null)
 
@@ -64,7 +64,9 @@ export function SettingsPage(): React.ReactElement {
         restaurantNameAr: s.restaurantNameAr,
         currencySymbol: s.currencySymbol,
         phoneNumber: s.phoneNumber ?? '',
-        receiptFooterAr: s.receiptFooterAr ?? ''
+        receiptFooterAr: s.receiptFooterAr ?? '',
+        taxRate: s.taxRate != null && s.taxRate > 0 ? String(s.taxRate) : '',
+        defaultDeliveryFee: s.defaultDeliveryFee != null && s.defaultDeliveryFee > 0 ? String(s.defaultDeliveryFee) : ''
       })
       const color = s.primaryColor ?? DEFAULT_PRIMARY
       setSelectedColor(color)
@@ -86,7 +88,9 @@ export function SettingsPage(): React.ReactElement {
         restaurantNameAr: receiptForm.restaurantNameAr.trim(),
         currencySymbol: receiptForm.currencySymbol.trim(),
         phoneNumber: receiptForm.phoneNumber.trim() || undefined,
-        receiptFooterAr: receiptForm.receiptFooterAr.trim() || undefined
+        receiptFooterAr: receiptForm.receiptFooterAr.trim() || undefined,
+        taxRate: receiptForm.taxRate ? Number(receiptForm.taxRate) : 0,
+        defaultDeliveryFee: receiptForm.defaultDeliveryFee ? Number(receiptForm.defaultDeliveryFee) : 0
       })
       setReceiptMsg('تم حفظ إعدادات الإيصال')
     } catch { setReceiptMsg('فشل الحفظ') }
@@ -200,6 +204,14 @@ export function SettingsPage(): React.ReactElement {
             <label className="field settings-form-grid__full">
               <span>تذييل الإيصال</span>
               <textarea value={receiptForm.receiptFooterAr} onChange={(e) => setReceiptForm((f) => ({ ...f, receiptFooterAr: e.target.value }))} placeholder="شكراً لزيارتكم…" rows={2} />
+            </label>
+            <label className="field">
+              <span>ضريبة القيمة المضافة % (0 = بدون ضريبة)</span>
+              <input type="number" min="0" max="100" step="0.1" value={receiptForm.taxRate} onChange={(e) => setReceiptForm((f) => ({ ...f, taxRate: e.target.value }))} placeholder="0" />
+            </label>
+            <label className="field">
+              <span>رسوم التوصيل الافتراضية</span>
+              <input type="number" min="0" step="0.01" value={receiptForm.defaultDeliveryFee} onChange={(e) => setReceiptForm((f) => ({ ...f, defaultDeliveryFee: e.target.value }))} placeholder="0.00" />
             </label>
           </div>
           <div className="form-actions">

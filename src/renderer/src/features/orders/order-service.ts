@@ -1,11 +1,11 @@
 /**
  * Order service — SQLite primary database.
- * All order lifecycle operations read/write SQLite directly.
- * Firebase receives changes automatically via the outbox.
+ * Supports: discounts, VAT/tax, delivery info, split payment, order editing.
  */
 import type {
   CashDrawerTransaction,
   DiningTable,
+  DiscountType,
   InventoryTransaction,
   MenuItem,
   Order,
@@ -20,7 +20,9 @@ import {
 import {
   orderSubtotal,
   orderTotal,
-  lineTotal
+  lineTotal,
+  computeDiscount,
+  computeTax
 } from '@shared/services/order-calculator'
 import { COLLECTIONS } from '@shared/constants/collections'
 import { SETTINGS_DOC_ID } from '@shared/schema/firestore-schema'
@@ -44,6 +46,8 @@ export async function getSettings(): Promise<AppSettings> {
     pinEnabled: false,
     autoLockMinutes: 5,
     nextOrderNumber: 1,
+    taxRate: 0,
+    defaultDeliveryFee: 0,
     updatedAt: Date.now()
   }
   const cached = await getCachedDoc<AppSettings>(COLLECTIONS.settings, SETTINGS_DOC_ID)
@@ -61,6 +65,8 @@ export async function updateSettings(
       | 'primaryColor'
       | 'pinEnabled'
       | 'autoLockMinutes'
+      | 'taxRate'
+      | 'defaultDeliveryFee'
     >
   >
 ): Promise<void> {
@@ -96,11 +102,26 @@ export async function completeOrder(params: {
   orderNoteAr?: string
   orderType?: OrderType
   table?: Pick<DiningTable, 'id' | 'nameAr' | 'categoryAr'>
-  paymentMethod?: 'cash' | 'card'
+  paymentMethod?: 'cash' | 'card' | 'split'
+  cashPaid?: number    // for split payment
+  cardPaid?: number    // for split payment
+  discountType?: DiscountType
+  discountValue?: number
+  deliveryFee?: number
+  customerName?: string
+  customerPhone?: string
+  customerAddress?: string
 }): Promise<Order> {
+  const settings = await getSettings()
   const subtotal = orderSubtotal(params.lines)
-  const total = orderTotal(subtotal)
   const orderType = params.orderType ?? 'takeaway'
+  const deliveryFee = params.deliveryFee ?? (orderType === 'delivery' ? (settings.defaultDeliveryFee ?? 0) : 0)
+
+  const discountAmount = computeDiscount(subtotal, params.discountType, params.discountValue)
+  const afterDiscount = subtotal - discountAmount
+  const taxRate = settings.taxRate ?? 0
+  const taxAmount = computeTax(afterDiscount, taxRate)
+  const total = orderTotal(subtotal, discountAmount, taxAmount, deliveryFee)
 
   if (orderType === 'takeaway' && !params.paymentMethod) {
     throw new Error('Payment method is required for takeaway orders')
@@ -119,14 +140,11 @@ export async function completeOrder(params: {
     (o) => o.shiftId === shift.id
   )
   const maxShiftSequence = existingOrders.reduce(
-    (max, o) =>
-      o.orderNumber > 0 && o.orderNumber <= 999999 ? Math.max(max, o.orderNumber) : max,
+    (max, o) => o.orderNumber > 0 && o.orderNumber <= 999999 ? Math.max(max, o.orderNumber) : max,
     0
   )
   const { orderNumber, orderCode } = nextLocalShiftOrderReference(
-    shift.id,
-    params.cashierCode,
-    maxShiftSequence
+    shift.id, params.cashierCode, maxShiftSequence
   )
 
   const now = Date.now()
@@ -139,7 +157,7 @@ export async function completeOrder(params: {
     orderCode,
     status: isPaid ? 'completed' : 'draft',
     orderType,
-    paymentStatus: isPaid ? 'paid' : 'unpaid',
+    paymentStatus: isPaid ? (params.paymentMethod === 'split' ? 'split' : 'paid') : 'unpaid',
     tableId: params.table?.id,
     tableNameAr: params.table?.nameAr,
     tableCategoryAr: params.table?.categoryAr,
@@ -148,8 +166,17 @@ export async function completeOrder(params: {
     cashierName: params.cashierName,
     cashierCode: params.cashierCode,
     subtotal,
+    discountType: params.discountType,
+    discountValue: params.discountValue,
+    discountAmount: discountAmount > 0 ? discountAmount : undefined,
+    taxRate: taxRate > 0 ? taxRate : undefined,
+    taxAmount: taxAmount > 0 ? taxAmount : undefined,
+    deliveryFee: deliveryFee > 0 ? deliveryFee : undefined,
     total,
     noteAr: params.orderNoteAr,
+    customerName: params.customerName,
+    customerPhone: params.customerPhone,
+    customerAddress: params.customerAddress,
     createdAt: now,
     updatedAt: now,
     completedAt: isPaid ? now : undefined,
@@ -171,46 +198,44 @@ export async function completeOrder(params: {
     noteAr: line.noteAr
   }))
 
-  const payment: Payment | null = isPaid
-    ? {
-        id: generateId(),
-        orderId,
-        amount: total,
-        method: params.paymentMethod!,
-        createdAt: now
-      }
-    : null
+  // Build payments (supports split)
+  const payments: Payment[] = []
+  if (isPaid && params.paymentMethod) {
+    if (params.paymentMethod === 'split') {
+      const cashAmt = Math.round((params.cashPaid ?? 0) * 100) / 100
+      const cardAmt = Math.round((params.cardPaid ?? 0) * 100) / 100
+      if (cashAmt > 0) payments.push({ id: generateId(), orderId, amount: cashAmt, method: 'cash', createdAt: now })
+      if (cardAmt > 0) payments.push({ id: generateId(), orderId, amount: cardAmt, method: 'card', createdAt: now })
+    } else {
+      payments.push({ id: generateId(), orderId, amount: total, method: params.paymentMethod as 'cash' | 'card', createdAt: now })
+    }
+  }
 
   const inventoryTransactions = await buildInventoryTransactions(
-    orderId,
-    orderItems,
-    params.cashierId,
-    now,
-    shift.id
+    orderId, orderItems, params.cashierId, now, shift.id
   )
 
-  const drawerTransaction: CashDrawerTransaction | null = isPaid
-    ? {
+  // Cash drawer: one entry per payment method
+  const drawerTransactions: CashDrawerTransaction[] = []
+  if (isPaid) {
+    for (const p of payments) {
+      drawerTransactions.push({
         id: generateId(),
         type: 'sale',
-        amount: total,
+        amount: p.amount,
         shiftId: shift.id,
         orderId,
         createdBy: params.cashierId,
         createdAt: now
-      }
-    : null
+      })
+    }
+  }
 
-  // Write everything to SQLite atomically (sequential awaits)
   await cacheDocs(COLLECTIONS.orders, [order])
   await cacheDocs(COLLECTIONS.orderItems, orderItems)
-  if (payment) await cacheDocs(COLLECTIONS.payments, [payment])
-  if (inventoryTransactions.length) {
-    await cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions)
-  }
-  if (drawerTransaction) {
-    await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
-  }
+  if (payments.length) await cacheDocs(COLLECTIONS.payments, payments)
+  if (inventoryTransactions.length) await cacheDocs(COLLECTIONS.inventoryTransactions, inventoryTransactions)
+  if (drawerTransactions.length) await cacheDocs(COLLECTIONS.cashDrawerTransactions, drawerTransactions)
 
   return order
 }
@@ -223,7 +248,6 @@ async function buildInventoryTransactions(
   shiftId?: string
 ): Promise<InventoryTransaction[]> {
   const allLines: Array<{ ingredientId: string; quantity: number; unit: string }> = []
-
   for (const item of items) {
     const menuItem = await getCachedDoc<MenuItem>(COLLECTIONS.menuItems, item.menuItemId)
     if (!menuItem?.recipeId) continue
@@ -231,7 +255,6 @@ async function buildInventoryTransactions(
     if (!recipe) continue
     allLines.push(...recipeDeductionLines(recipe, item.quantity))
   }
-
   return mergeDeductionLines(allLines).map((line) => ({
     id: generateId(),
     ingredientId: line.ingredientId,
@@ -248,13 +271,15 @@ async function buildInventoryTransactions(
 }
 
 // ---------------------------------------------------------------------------
-// Mark paid
+// Mark paid (supports split payment)
 // ---------------------------------------------------------------------------
 
 export async function markOrderPaid(params: {
   orderId: string
   cashierId: string
-  paymentMethod: 'cash' | 'card'
+  paymentMethod: 'cash' | 'card' | 'split'
+  cashPaid?: number
+  cardPaid?: number
 }): Promise<Order | null> {
   const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
   if (!order || order.status === 'cancelled') return null
@@ -263,32 +288,116 @@ export async function markOrderPaid(params: {
   const paidOrder: Order = {
     ...order,
     status: 'completed',
-    paymentStatus: 'paid',
+    paymentStatus: params.paymentMethod === 'split' ? 'split' : 'paid',
     paidAt: now,
     completedAt: now,
     updatedAt: now
   }
-  const payment: Payment = {
-    id: generateId(),
-    orderId: order.id,
-    amount: order.total,
-    method: params.paymentMethod,
-    createdAt: now
+
+  const payments: Payment[] = []
+  if (params.paymentMethod === 'split') {
+    const cashAmt = Math.round((params.cashPaid ?? 0) * 100) / 100
+    const cardAmt = Math.round((params.cardPaid ?? 0) * 100) / 100
+    if (cashAmt > 0) payments.push({ id: generateId(), orderId: order.id, amount: cashAmt, method: 'cash', createdAt: now })
+    if (cardAmt > 0) payments.push({ id: generateId(), orderId: order.id, amount: cardAmt, method: 'card', createdAt: now })
+  } else {
+    payments.push({ id: generateId(), orderId: order.id, amount: order.total, method: params.paymentMethod, createdAt: now })
   }
-  const drawerTransaction: CashDrawerTransaction = {
+
+  const drawerTransactions: CashDrawerTransaction[] = payments.map((p) => ({
     id: generateId(),
     type: 'sale',
-    amount: order.total,
+    amount: p.amount,
     shiftId: order.shiftId,
     orderId: order.id,
     createdBy: params.cashierId,
     createdAt: now
-  }
+  }))
 
   await cacheDocs(COLLECTIONS.orders, [paidOrder])
-  await cacheDocs(COLLECTIONS.payments, [payment])
-  await cacheDocs(COLLECTIONS.cashDrawerTransactions, [drawerTransaction])
+  await cacheDocs(COLLECTIONS.payments, payments)
+  await cacheDocs(COLLECTIONS.cashDrawerTransactions, drawerTransactions)
   return paidOrder
+}
+
+// ---------------------------------------------------------------------------
+// Edit open dine-in / delivery order
+// ---------------------------------------------------------------------------
+
+export async function editOrderItems(params: {
+  orderId: string
+  cashierId: string
+  lines: CartLine[]
+  orderNoteAr?: string
+}): Promise<Order> {
+  const order = await getCachedDoc<Order>(COLLECTIONS.orders, params.orderId)
+  if (!order) throw new Error('الطلب غير موجود')
+  if (order.status === 'cancelled') throw new Error('الطلب ملغي')
+  if (order.paymentStatus === 'paid' || order.paymentStatus === 'split') {
+    throw new Error('لا يمكن تعديل طلب مدفوع')
+  }
+
+  const settings = await getSettings()
+  const subtotal = orderSubtotal(params.lines)
+  const discountAmount = computeDiscount(subtotal, order.discountType, order.discountValue)
+  const afterDiscount = subtotal - discountAmount
+  const taxRate = settings.taxRate ?? 0
+  const taxAmount = computeTax(afterDiscount, taxRate)
+  const deliveryFee = order.deliveryFee ?? 0
+  const total = orderTotal(subtotal, discountAmount, taxAmount, deliveryFee)
+
+  const now = Date.now()
+  const updatedOrder: Order = {
+    ...order,
+    subtotal,
+    discountAmount: discountAmount > 0 ? discountAmount : undefined,
+    taxAmount: taxAmount > 0 ? taxAmount : undefined,
+    total,
+    noteAr: params.orderNoteAr ?? order.noteAr,
+    updatedAt: now
+  }
+
+  // Replace order items
+  const allItems = await getCachedDocs<OrderItem>(COLLECTIONS.orderItems)
+  const oldItems = allItems.filter((i) => i.orderId === params.orderId)
+  const newItems: OrderItem[] = params.lines.map((line) => ({
+    id: generateId(),
+    orderId: params.orderId,
+    menuItemId: line.menuItemId,
+    nameAr: line.nameAr,
+    unitPrice: line.unitPrice,
+    quantity: line.quantity,
+    sizeLabelAr: line.sizeLabelAr,
+    attachmentForMenuItemId: line.attachmentForMenuItemId,
+    unitLabel: line.unitLabel,
+    weightGrams: line.weightGrams,
+    lineTotal: lineTotal(line.unitPrice, line.quantity),
+    noteAr: line.noteAr
+  }))
+
+  // Reverse old inventory deductions, apply new ones
+  const oldInventory = (await getCachedDocs<InventoryTransaction>(COLLECTIONS.inventoryTransactions))
+    .filter((tx) => tx.referenceId === params.orderId && tx.type === 'sale')
+  const reversals: InventoryTransaction[] = oldInventory.map((tx) => ({
+    ...tx,
+    id: generateId(),
+    type: 'sale_reversal' as const,
+    quantity: -tx.quantity,
+    noteAr: 'عكس تعديل طلب',
+    createdAt: now
+  }))
+  const newInventory = await buildInventoryTransactions(
+    params.orderId, newItems, params.cashierId, now, order.shiftId
+  )
+
+  // Remove old items (mark them as replaced by writing updated list without old ones)
+  const remainingItems = allItems.filter((i) => i.orderId !== params.orderId)
+  await cacheDocs(COLLECTIONS.orders, [updatedOrder])
+  await cacheDocs(COLLECTIONS.orderItems, [...remainingItems, ...newItems])
+  if (reversals.length) await cacheDocs(COLLECTIONS.inventoryTransactions, reversals)
+  if (newInventory.length) await cacheDocs(COLLECTIONS.inventoryTransactions, newInventory)
+
+  return updatedOrder
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +424,8 @@ export async function cancelOrder(params: {
     updatedAt: now
   }
 
-  const shouldReverseCash = order.status === 'completed' && order.paymentStatus !== 'unpaid'
+  const shouldReverseCash = order.status === 'completed' &&
+    order.paymentStatus !== 'unpaid' && order.paymentStatus !== undefined
   const drawerTransaction: CashDrawerTransaction | null = shouldReverseCash
     ? {
         id: generateId(),
@@ -323,7 +433,7 @@ export async function cancelOrder(params: {
         amount: -order.total,
         shiftId: order.shiftId,
         orderId: order.id,
-        noteAr: params.reasonAr || 'Cancelled order',
+        noteAr: params.reasonAr || 'إلغاء طلب',
         createdBy: params.cancelledBy,
         createdAt: now
       }
@@ -372,8 +482,7 @@ export async function listOrders(limit = 50): Promise<Order[]> {
 export async function listUnpaidDineInOrders(): Promise<Order[]> {
   const orders = await listOrders(1000)
   return orders.filter(
-    (o) =>
-      o.status !== 'cancelled' &&
+    (o) => o.status !== 'cancelled' &&
       (o.orderType ?? 'takeaway') === 'dine_in' &&
       (o.paymentStatus === 'unpaid' || o.status === 'draft')
   )
@@ -382,8 +491,7 @@ export async function listUnpaidDineInOrders(): Promise<Order[]> {
 export async function listUnpaidDeferredOrders(): Promise<Order[]> {
   const orders = await listOrders(1000)
   return orders.filter(
-    (o) =>
-      o.status !== 'cancelled' &&
+    (o) => o.status !== 'cancelled' &&
       ((o.orderType ?? 'takeaway') === 'dine_in' || o.orderType === 'delivery') &&
       (o.paymentStatus === 'unpaid' || o.status === 'draft')
   )

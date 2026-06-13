@@ -32,6 +32,7 @@ import {
   MdArrowUpward, MdArrowDownward, MdEdit, MdCheck,
   MdClose, MdMenuBook, MdCategory
 } from 'react-icons/md'
+import { usePageState } from '@renderer/features/tabs/page-state-store'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -195,26 +196,42 @@ function CategoriesTab({ categories, onRefresh, setMessage }: {
 
 // ── ItemsTab ────────────────────────────────────────────────────────────────
 
-function ItemsTab({ categories, items, ingredients, onRefresh, setMessage }: {
+export type ItemFormState = {
+  categoryId: string
+  nameAr: string
+  price: string
+  sizeOptions: SizeOptionForm[]
+  attachments: AttachmentForm[]
+  isWeighted: boolean
+  weightedPriceOptions: WeightedPriceOptionForm[]
+  allowCustomWeight: boolean
+  customWeightUnitPrice: string
+  lines: RecipeLineForm[]
+}
+
+export const defaultItemForm: ItemFormState = {
+  categoryId: '',
+  nameAr: '',
+  price: '',
+  sizeOptions: [],
+  attachments: [],
+  isWeighted: false,
+  weightedPriceOptions: [{ id: 'default-weighted', label: '1 كجم', weightGrams: '1000', price: '' }],
+  allowCustomWeight: false,
+  customWeightUnitPrice: '',
+  lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }]
+}
+
+function ItemsTab({ categories, items, ingredients, onRefresh, setMessage, itemForm, setItemForm }: {
   categories: MenuCategory[]
   items: MenuItem[]
   ingredients: { id: string; nameAr: string; unit: string }[]
   onRefresh: () => Promise<void>
   setMessage: (m: string | null) => void
+  itemForm: ItemFormState
+  setItemForm: React.Dispatch<React.SetStateAction<ItemFormState>>
 }): React.ReactElement {
   const [editingItem, setEditingItem] = useState<ItemEditState | null>(null)
-  const [itemForm, setItemForm] = useState({
-    categoryId: '',
-    nameAr: '',
-    price: '',
-    sizeOptions: [] as SizeOptionForm[],
-    attachments: [] as AttachmentForm[],
-    isWeighted: false,
-    weightedPriceOptions: [newWeightedOption(true)] as WeightedPriceOptionForm[],
-    allowCustomWeight: false,
-    customWeightUnitPrice: '',
-    lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] as RecipeLineForm[]
-  })
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null)
   const [recipeLines, setRecipeLines] = useState<RecipeLine[]>([])
   const [savingOrder, setSavingOrder] = useState(false)
@@ -230,7 +247,6 @@ function ItemsTab({ categories, items, ingredients, onRefresh, setMessage }: {
     setMessage(null)
     if (!itemForm.categoryId) { setMessage('اختر التصنيف أولاً'); return }
     const lines: RecipeLine[] = itemForm.lines.filter((l) => l.ingredientId && l.quantity).map((l) => ({ ingredientId: l.ingredientId, quantity: Number(l.quantity), unit: l.unit }))
-    if (lines.length === 0) { setMessage('أضف مكوّناً واحداً على الأقل'); return }
     const weightedOpts = normalizeWeightedOptions(itemForm.weightedPriceOptions)
     const sizeOpts = normalizeSizeOptions(itemForm.sizeOptions)
     const attachOpts = normalizeAttachments(itemForm.attachments)
@@ -251,7 +267,7 @@ function ItemsTab({ categories, items, ingredients, onRefresh, setMessage }: {
         lines,
         sortOrder: items.length
       })
-      setItemForm((f) => ({ ...f, nameAr: '', price: '', sizeOptions: [], attachments: [], isWeighted: false, weightedPriceOptions: [newWeightedOption(true)], allowCustomWeight: false, customWeightUnitPrice: '', lines: [{ ingredientId: '', quantity: '', unit: 'جرام' }] }))
+      setItemForm((f) => ({ ...defaultItemForm, categoryId: f.categoryId, weightedPriceOptions: [newWeightedOption(true)] }))
       setMessage('تم حفظ الصنف')
       await onRefresh()
     } catch (err) { setMessage(err instanceof Error ? err.message : 'فشل') }
@@ -393,7 +409,7 @@ function ItemsTab({ categories, items, ingredients, onRefresh, setMessage }: {
           </div>
 
           {/* Recipe lines */}
-          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة</h3>
+          <h3 style={{ margin: '12px 0 8px', fontWeight: 700 }}>مكوّنات الوصفة <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)', fontWeight: 400 }}>(اختياري — اتركه فارغاً إذا لم تريد خصم مخزون)</span></h3>
           {itemForm.lines.map((line, idx) => (
             <div key={idx} className="page-toolbar" style={{ gap: 6 }}>
               <select value={line.ingredientId} onChange={(e) => {
@@ -487,11 +503,27 @@ function ItemsTab({ categories, items, ingredients, onRefresh, setMessage }: {
 type ItemsTab = 'categories' | 'items'
 
 export function ItemsPage(): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<ItemsTab>('items')
+  const { saved, save } = usePageState<{
+    activeTab: ItemsTab
+    itemForm: ItemFormState
+  }>('/manager/items')
+
+  const [activeTab, setActiveTab] = useState<ItemsTab>(saved.activeTab ?? 'items')
   const [categories, setCategories] = useState<MenuCategory[]>([])
   const [items, setItems] = useState<MenuItem[]>([])
   const [ingredients, setIngredients] = useState<{ id: string; nameAr: string; unit: string }[]>([])
   const [message, setMessage] = useState<string | null>(null)
+
+  // Restore persisted itemForm or use defaults
+  const [itemForm, setItemForm] = useState<ItemFormState>(() => {
+    const s = saved.itemForm
+    if (s) return s as ItemFormState
+    return { ...defaultItemForm, weightedPriceOptions: [newWeightedOption(true)] }
+  })
+
+  // Persist active tab + itemForm whenever they change
+  useEffect(() => { save({ activeTab }) }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { save({ itemForm }) }, [itemForm]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     const [cats, menu, ing] = await Promise.all([listCategories(), listMenuItems(), listIngredients()])
@@ -539,7 +571,7 @@ export function ItemsPage(): React.ReactElement {
       )}
 
       {activeTab === 'categories' && <CategoriesTab categories={categories} onRefresh={load} setMessage={setMessage} />}
-      {activeTab === 'items'      && <ItemsTab categories={categories} items={items} ingredients={ingredients} onRefresh={load} setMessage={setMessage} />}
+      {activeTab === 'items'      && <ItemsTab categories={categories} items={items} ingredients={ingredients} onRefresh={load} setMessage={setMessage} itemForm={itemForm} setItemForm={setItemForm} />}
     </div>
   )
 }

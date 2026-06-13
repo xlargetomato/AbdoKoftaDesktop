@@ -16,6 +16,14 @@ export interface ShiftSummary {
   cancelledOrders: Order[]
   revenue: number
   drawerTotal: number
+  /** Expected cash = openingCash + cash sales - cash expenses */
+  expectedCash: number
+  /** Actual cash counted at close (closingCash) */
+  actualCash?: number
+  /** Difference: actualCash - expectedCash */
+  cashDifference?: number
+  cashRevenue: number
+  cardRevenue: number
   expenses: number
   suppliedInventory: Array<InventoryTransaction & { ingredientNameAr: string }>
   usedInventory: Array<InventoryTransaction & { ingredientNameAr: string }>
@@ -86,6 +94,7 @@ export async function ensureOpenShift(params: {
   cashierId: string
   cashierName: string
   cashierCode?: string
+  openingCash?: number
 }): Promise<Shift> {
   const existing = await getOpenShiftForCashier(params.cashierId)
   if (existing) return existing
@@ -98,6 +107,7 @@ export async function ensureOpenShift(params: {
     cashierCode: params.cashierCode,
     status: 'open',
     archived: false,
+    openingCash: params.openingCash,
     openedAt: now,
     createdAt: now,
     updatedAt: now
@@ -106,9 +116,15 @@ export async function ensureOpenShift(params: {
   return shift
 }
 
-export async function closeShift(shiftId: string, closedBy: string): Promise<void> {
+export async function closeShift(shiftId: string, closedBy: string, closingCash?: number): Promise<void> {
   const now = Date.now()
-  await patchCachedShifts([shiftId], { status: 'closed', closedAt: now, closedBy, updatedAt: now })
+  await patchCachedShifts([shiftId], {
+    status: 'closed',
+    closedAt: now,
+    closedBy,
+    closingCash,
+    updatedAt: now
+  })
 }
 
 export async function archiveShifts(shiftIds: string[]): Promise<void> {
@@ -165,6 +181,28 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
   const drawerTotal = shiftCashTransactions.reduce((sum, tx) => sum + tx.amount, 0)
 
+  // Payment method breakdown from order payments
+  const allPayments = await getCachedDocs<{ orderId: string; amount: number; method: string }>(
+    COLLECTIONS.payments
+  )
+  const shiftOrderIds = new Set(orders.map((o) => o.id))
+  const shiftPayments = allPayments.filter((p) => shiftOrderIds.has(p.orderId))
+  const cashRevenue = shiftPayments
+    .filter((p) => p.method === 'cash')
+    .reduce((sum, p) => sum + p.amount, 0)
+  const cardRevenue = shiftPayments
+    .filter((p) => p.method === 'card')
+    .reduce((sum, p) => sum + p.amount, 0)
+
+  // Cash reconciliation
+  const openingCash = shift.openingCash ?? 0
+  const cashExpenses = shiftCashTransactions
+    .filter((tx) => tx.amount < 0)
+    .reduce((sum, tx) => sum + tx.amount, 0) // negative sum
+  const expectedCash = openingCash + cashRevenue + cashExpenses
+  const actualCash = shift.closingCash
+  const cashDifference = actualCash !== undefined ? actualCash - expectedCash : undefined
+
   return {
     shift,
     orders,
@@ -172,6 +210,11 @@ export async function getShiftSummary(shift: Shift): Promise<ShiftSummary> {
     cancelledOrders,
     revenue,
     drawerTotal,
+    expectedCash,
+    actualCash,
+    cashDifference,
+    cashRevenue,
+    cardRevenue,
     expenses,
     suppliedInventory: suppliedInventory.map(withName),
     usedInventory: usedInventory.map(withName),

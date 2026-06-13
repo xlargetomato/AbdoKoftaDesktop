@@ -292,7 +292,6 @@ export function MenuManagementPage(): React.ReactElement {
     const lines: RecipeLine[] = itemForm.lines
       .filter((l) => l.ingredientId && l.quantity)
       .map((l) => ({ ingredientId: l.ingredientId, quantity: Number(l.quantity), unit: l.unit }))
-    if (lines.length === 0) { setMessage('أضف مكوّناً واحداً على الأقل'); return }
     const weightedPriceOptions = normalizeWeightedOptions(itemForm.weightedPriceOptions)
     const sizeOptions = normalizeSizeOptions(itemForm.sizeOptions)
     const attachments = normalizeAttachments(itemForm.attachments)
